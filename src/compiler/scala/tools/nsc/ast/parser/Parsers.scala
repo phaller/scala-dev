@@ -1066,7 +1066,8 @@ self =>
           val thenp = expr()
           val elsep = if (in.token == ELSE) { in.nextToken(); expr() }
                       else Literal(())
-          If(cond, thenp, elsep) 
+          //If(cond, thenp, elsep) 
+          makeIfThenElse(cond, thenp, elsep) 
         }
       case TRY =>
         atPos(in.skipToken()) {
@@ -1091,17 +1092,17 @@ self =>
           val cond = condExpr()
           newLinesOpt()
           val body = expr()
-          makeWhile(lname, cond, body) 
+          makeWhileDo(cond, body) 
         }
       case DO =>
         val start = in.offset
         atPos(in.skipToken()) {
-          val lname: Name = freshName(o2p(start), "doWhile$")
+//          val lname: Name = freshName(o2p(start), "doWhile$")
           val body = expr()
           if (isStatSep) in.nextToken()
           accept(WHILE)
           val cond = condExpr()
-          makeDoWhile(lname, body, cond) 
+          makeDoWhile(body, cond) 
         }
       case FOR =>
         atPos(in.skipToken()) {
@@ -1117,7 +1118,7 @@ self =>
         }
       case RETURN =>
         atPos(in.skipToken()) {
-          Return(if (isExprIntro) expr() else Literal(()))
+          makeReturn(if (isExprIntro) expr() else Literal(()))
         }
       case THROW =>
         atPos(in.skipToken()) { 
@@ -1341,7 +1342,7 @@ self =>
               case _ =>
                 stripParens(t)
             }
-            Apply(sel, argumentExprs())
+            makeApply(sel, argumentExprs())
           }
           simpleExprRest(app, true)
         case USCORE =>
@@ -1360,13 +1361,31 @@ self =>
       def args(): List[Tree] = commaSeparated {
         val maybeNamed = isIdent
         expr() match {
-          case a @ Assign(id, rhs) if maybeNamed =>
+          case a @ LiftedAssign(id, rhs) if maybeNamed =>
             atPos(a.pos) { AssignOrNamedArg(id, rhs) }
           case e => e
         }
       }
 
-      if (in.token == LBRACE)
+      // if arg has the form "x$1 => a = x$1" it's treated as "a = x$1" with x$1
+      // in placeholderParams. This allows e.g. "val f: Int => Int = foo(a = 1, b = _)"
+/*
+      //TR: no longer used? see Lukas commit at r22324
+      def convertArg(arg: Tree): Tree = arg match {
+        case Function(
+          List(vd @ ValDef(mods, pname1, ptype1, EmptyTree)),
+          LiftedAssign(Ident(aname), rhs)) if (mods hasFlag Flags.SYNTHETIC) =>
+          rhs match {
+            case Ident(`pname1`) | Typed(Ident(`pname1`), _) =>
+              placeholderParams = vd :: placeholderParams
+              atPos(arg.pos) { AssignOrNamedArg(Ident(aname), Ident(pname1)) }
+            case _ => arg
+          }
+        case _ => arg
+      }
+*/
+
+      if (in.token == LBRACE) 
         List(blockExpr())
       else
         surround(LPAREN, RPAREN)(if (in.token == RPAREN) List() else args(), List())
@@ -2112,11 +2131,14 @@ self =>
       val rhs =
         if (tp.isEmpty || in.token == EQUALS) {
           accept(EQUALS)
-          if (!tp.isEmpty && newmods.hasFlag(Flags.MUTABLE) && 
-              (lhs.toList forall (_.isInstanceOf[Ident])) && in.token == USCORE) {
+          if (!tp.isEmpty && (newmods hasFlag Flags.MUTABLE) && 
+              (lhs.toList forall (_.isInstanceOf[Ident])) && in.token == USCORE) 
+          {
             in.nextToken()
             newmods = newmods | Flags.DEFAULTINIT
             EmptyTree
+          } else if (newmods hasFlag Flags.MUTABLE) {
+            makeNewVar(expr())
           } else {
             expr()
           }

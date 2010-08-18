@@ -20,7 +20,8 @@ import annotation.elidable.ASSERTION
  *  accessible in all Scala compilation units without explicit
  *  qualification.
  */
-object Predef extends LowPriorityImplicits {
+object Predef extends LowPriorityImplicits with EmbeddedControls  {
+
   /** Return the runtime representation of a class type.  This is a stub method.
    *  The actual implementation is filled in by the compiler.
    */
@@ -297,7 +298,7 @@ object Predef extends LowPriorityImplicits {
     def subSequence(start: Int, end: Int): CharSequence = arrayToCharSequence(xs.slice(start, end))
     override def toString: String = xs.mkString("")
   }
-  
+
   // Type Constraints --------------------------------------------------------------
 
   // used, for example, in the encoding of generalized constraints

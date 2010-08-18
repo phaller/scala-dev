@@ -684,16 +684,20 @@ trait Typers { self: Analyzer =>
       case _  =>
         if (phase.next.erasedTypes) qual.tpe.member(name)
         else qual.tpe.nonLocalMember(name)
-    }      
+    }
 
-    def silent[T](op: Typer => T): Any /* in fact, TypeError or T */ = { 
+    def silent[T](op: Typer => T, 
+                  reportAmbiguousErrors: Boolean = context.reportAmbiguousErrors, 
+                  newtree: Tree = context.tree): Any /* in fact, TypeError or T */ = { 
       val rawTypeStart = startCounter(rawTypeFailed)
       val findMemberStart = startCounter(findMemberFailed)
       val subtypeStart = startCounter(subtypeFailed)
       val failedSilentStart = startTimer(failedSilentNanos)
       try {
-        if (context.reportGeneralErrors) {
-          val context1 = context.makeSilent(context.reportAmbiguousErrors)
+        if (context.reportGeneralErrors || 
+            reportAmbiguousErrors != context.reportAmbiguousErrors ||
+            newtree != context.tree) {
+          val context1 = context.makeSilent(reportAmbiguousErrors, newtree)
           context1.undetparams = context.undetparams
           context1.savedTypeBounds = context.savedTypeBounds
           context1.namedApplyBlockInfo = context.namedApplyBlockInfo
@@ -3146,19 +3150,14 @@ trait Typers { self: Analyzer =>
 
       def typedIf(cond: Tree, thenp: Tree, elsep: Tree) = {
         val cond1 = checkDead(typed(cond, EXPRmode | BYVALmode, BooleanClass.tpe))
-        if (elsep.isEmpty) { // in the future, should be unnecessary
-          val thenp1 = typed(thenp, UnitClass.tpe)
-          treeCopy.If(tree, cond1, thenp1, elsep) setType thenp1.tpe
-        } else { 
-          var thenp1 = typed(thenp, pt)
-          var elsep1 = typed(elsep, pt)
-          val (owntype, needAdapt) = ptOrLub(List(thenp1.tpe, elsep1.tpe))
-          if (needAdapt) { //isNumericValueType(owntype)) {
-            thenp1 = adapt(thenp1, mode, owntype)
-            elsep1 = adapt(elsep1, mode, owntype)
-          }
-          treeCopy.If(tree, cond1, thenp1, elsep1) setType owntype
+        var thenp1 = typed(thenp, pt)
+        var elsep1 = typed(elsep, pt)
+        val (owntype, needAdapt) = ptOrLub(List(thenp1.tpe, elsep1.tpe))
+        if (needAdapt) { //isNumericValueType(owntype)) {
+          thenp1 = adapt(thenp1, mode, owntype)
+          elsep1 = adapt(elsep1, mode, owntype)
         }
+        treeCopy.If(tree, cond1, thenp1, elsep1) setType owntype
       }
 
       def typedReturn(expr: Tree) = {
@@ -3317,7 +3316,203 @@ trait Typers { self: Analyzer =>
         }
       }
     
-      def typedApply(fun: Tree, args: List[Tree]) = {
+      def typedApply(fun: Tree, args: List[Tree]): Tree = fun match {
+        case Select(qual, name) if ((mode & EXPRmode) != 0) && 
+              !treeInfo.isSelfOrSuperConstrCall(fun) && fun.symbol == NoSymbol && phase.id <= currentRun.typerPhase.id =>//!phase.erasedTypes =>
+
+          val extname = "__ext__" + name
+          //println("contemplating " + mode.toHexString + "/" + fun.symbol + ": " + Apply(fun, args) + " ---> " + Apply(Ident(extname), qual::args))
+
+          //println("fun.tpe: "+fun.tpe)
+          //println("qual.tpe: "+qual.tpe)
+
+          // TODO: traverse enclClass chain: context.enclClass.owner.hasTransOwner(ProxyControlsClass) ?
+          val enclClassTp = ThisType(context.enclClass.owner)
+          val withinProxyTrait = enclClassTp.baseClasses.contains(ProxyControlsClass)
+          //println("withinProxyTrait: "+withinProxyTrait)
+
+
+          val ealts = silent(_.typed(Ident(extname).setPos(fun.pos), funMode(mode), WildcardType), false, tree) match {
+            case ext: Tree =>
+              //println("found ident: " + ext)
+              // do not make an external method accessible through the operator within its own body (HACK ?)
+              ext.symbol.alternatives.filter(s => s.isMethod && s != context.enclMethod.tree.symbol
+                && s.owner != EmbeddedControlsClass) // meths in embeddings trait are sentinels added
+                                                     // by a typedApply further up the stack
+            case _ =>
+              Nil
+          }
+          //println("found external alternatives: " + ealts)
+          
+
+          if (withinProxyTrait || !ealts.isEmpty) {
+            val qual1 = silent(t => checkDead(t.typedQualifier(qual, funMode(mode))), false, tree) match {
+              case qual1: Tree => qual1
+              case ex: TypeError => 
+                reportTypeError(fun.pos, ex)
+                return setError(tree)
+            }    // <--- t0218.scala
+            val fun1 = treeCopy.Select(fun, qual1, name)
+
+            //if (!ealts.isEmpty) 
+            
+            //println("fun1.tpe: "+fun1.tpe)
+            //println("qual1.tpe: "+qual1.tpe)
+            //
+            //println("normalize: "+qual1.tpe.normalize)
+            //println("widen: "+qual1.tpe.widen)
+            //
+            //println("typeSymbol: "+qual1.tpe.widen.typeSymbol)
+            
+            val proxytc = if (withinProxyTrait) enclClassTp.memberType(enclClassTp.member(nme.TransparentProxy)) else NoType
+            //println("proxy: " + proxytc) // careful, must not access enclClassTp if it's *not* our marker
+            
+            val qual1tp = qual1.tpe.widen
+            
+            val isReceiverActuallyLifted = withinProxyTrait && (qual1tp.typeArgs.length == 1) && 
+                (qual1tp <:< TypeRef(proxytc.prefix, proxytc.typeSymbol, List(AnyClass.tpe)))
+            //println("isReceiverActuallyLifted: " + isReceiverActuallyLifted)
+            
+            val generateLiftedAlts = withinProxyTrait && !qual1.isInstanceOf[This]
+            //println("generateLiftedAlts: " + generateLiftedAlts)
+            
+            def mymember(qual: Tree, name: Name) = if (isReceiverActuallyLifted)
+              qual1tp.typeArgs(0).nonLocalMember(name)
+            else
+              member(qual1, name)
+            
+            if (generateLiftedAlts || !ealts.isEmpty)
+            {
+              val ms = mymember(qual1, name)
+              //println("found member: " + ms)
+              val dalts = ms.alternatives.filter(_.isMethod)
+              //println("found declared alternatives: " + dalts)
+
+              if (!dalts.isEmpty) {
+                // both declared and external methods: temporarily add declared methods
+                // to EmbeddedControls, if lookup selects any of those => do default
+              
+                val installed = EmbeddedControlsClass.tpe.member(extname).alternatives
+              
+                def createExternalMethod(msym: Symbol, ttrans: Type => Type) = {
+                  val sentinel = EmbeddedControlsClass.newMethod(extname).setPos(msym.pos)
+
+                  val params1 = msym.tpe.params
+                  val resultType = msym.tpe.resultType
+                  //var receiverType = qual1.tpe // this should really be the owner of msym
+                  val receiverTypePoly = msym.owner.tpe
+                  val receiverTypeParams = receiverTypePoly.typeParams.map(p => sentinel.newTypeParameter(p.pos, p.name))
+                  val methodTypeParams = msym.tpe.typeParams.map(p => sentinel.newTypeParameter(p.pos, p.name))
+                  val typeParams = methodTypeParams ::: receiverTypeParams
+                  val receiverType = if (receiverTypeParams.isEmpty) receiverTypePoly
+                    else typeRef(receiverTypePoly.prefix, msym.owner, receiverTypeParams.map(_.tpe))
+              
+                  val params2 = sentinel.newSyntheticValueParam(ttrans(receiverType)) :: 
+                          sentinel.newSyntheticValueParams(params1.map(s=>ttrans(s.tpe)))
+                  if (typeParams.isEmpty)
+                    sentinel.setInfo(MethodType(params2, ttrans(resultType)))
+                  else
+                    sentinel.setInfo(PolyType(typeParams, MethodType(params2, ttrans(resultType))))
+
+                  installed.find { x => 
+                    val z = x.tpe == sentinel.tpe
+                    val z1 = x.tpe.toString == sentinel.tpe.toString
+                    //println(x.tpe + "==" + sentinel.tpe +"? " + z + ", " + z1)
+                    z1 // TODO: don't base comparison on strings
+                  } match {
+                    case Some(s) => 
+                      //println("re-using sentinel from outside")
+                      s
+                    case None => 
+                      EmbeddedControlsClass.info.decls.enter(sentinel)
+                  }
+                }
+              
+                val sentinelsPlain = for (msym <- dalts) yield createExternalMethod(msym, tp => tp)
+                val sentinelsLifted = if (!generateLiftedAlts) Nil else for (msym <- dalts) yield 
+                  createExternalMethod(msym, tp => typeRef(proxytc.prefix, proxytc.typeSymbol, List(tp))) // TODO: use typeRef() instead?
+          
+                // PROBLEM: nesting. if arguments add the same sentinels, we have duplicates -> ambiguous error!
+                // check for existence first ...
+                
+                //println("found external methods: " + ealts)
+
+                //println("found existing sentinels: " + installed + "/" + installed.map(_.tpe))
+          
+                //println("created plain sentinel methods: " + sentinelsPlain + "/" + sentinelsPlain.map(_.tpe))
+                //println("created lifted sentinel methods: " + sentinelsLifted + "/" + sentinelsLifted.map(_.tpe))
+
+                val r = silent(_.typed(Apply(Ident(extname).setPos(fun.pos), qual1::args).setPos(tree.pos), mode, /*pt*/WildcardType), true, tree) // ambiguity is an error
+                for (s <- sentinelsPlain ::: sentinelsLifted if !installed.contains(s)) {
+                  EmbeddedControlsClass.info.decls.unlink(s)
+                  s.setInfo(NoType)
+                  s.updateInfo(NoType)
+                }
+                r match { // TODO: tree might have been transformed!
+                  case res: Tree if sentinelsPlain.contains(res.symbol) =>
+                    // picked declared one --> do default (could short-circuit, but better be safe for now)
+                    //println("picked sentinel method: " + res + " (tpe: "+res.tpe+" pt: "+pt+")")
+                    typedApply1(fun1, args) // do default
+                  case res: Tree if sentinelsLifted.contains(res.symbol) =>
+                    // picked lifted one --> forward
+                    //println("picked lifted method: " + res + " (tpe: "+res.tpe+" pt: "+pt+")")
+                    // PROBLEM: result type can be Proxy[Nothing]
+                    // use result.tpe as expected type 
+                    assert(res.tpe <:< pt)
+                    typed(Apply(Ident("__forward").setPos(fun.pos), qual1::Literal(name.toString)::args).setPos(tree.pos),
+                      mode, res.tpe).setType(res.tpe)
+                  case res: Tree if ealts.contains(res.symbol) =>
+                    // picked external one
+                    //println("picked external method: " + res)
+                    res
+                  case res: Tree =>
+                    // FIXME
+                    // can't determine whether sentinel or external: probably the tree was transformed (e.g. {res; ()})
+                    unit.warning(res.pos, "EMBEDDING: cannot resolve target method (sym="+res.symbol+"): " + res)
+                    typedApply1(fun1, args)
+                  case ex: TypeError =>
+                    //println("te checking " + Apply(Ident(extname), qual1::args) + " ("+mode+","+pt+")")
+                    if (generateLiftedAlts) {
+                      // prevent default for now. output the error we got.
+                      // otherwise we'd report 'method not found' instead of 'type doesn't match'
+                      reportTypeError(fun.pos, ex)
+                      return setError(tree)
+                    } else {
+                      // neither declared nor external methods match --> do default, look for implicits
+                      //println("exception typing fun/xxx " + ": " + ex)
+                      typedApply1(fun1, args)
+                    }
+                }
+
+              } else {
+                // no declared methods but have external ones
+                silent(_.typed(Apply(Ident(extname).setPos(fun.pos), qual1::args), mode, pt), false, tree) match { // ambiguity is an error
+                  case res: Tree =>
+                    // picked external method
+                    //println("picked external method: " + res)
+                    res
+                  case ex: TypeError =>
+                    // no external method matches --> do default, look for implicits
+                    //println("exception typing xxx " + ": " + ex)
+                    typedApply1(fun1, args)
+                }
+              }
+            } else {
+              // !isReceiverLifted && ealts.isEmpty
+              // might have declared methods but no external methods --> do default
+              typedApply1(fun, args)
+            }
+          } else {
+            // !withinProxyTrait && ealts.isEmpty
+            // might have declared methods but no external methods --> do default
+            typedApply1(fun, args)
+          }
+
+        case _ =>
+          typedApply1(fun, args)
+      }
+        
+      def typedApply1(fun: Tree, args: List[Tree]): Tree = {
         val stableApplication = (fun.symbol ne null) && fun.symbol.isMethod && fun.symbol.isStable
         if (stableApplication && isPatternMode) {
           // treat stable function applications f() as expressions.
@@ -3326,7 +3521,9 @@ trait Typers { self: Analyzer =>
           val funpt = if (isPatternMode) pt else WildcardType
           val appStart = startTimer(failedApplyNanos)
           val opeqStart = startTimer(failedOpEqNanos)
-          silent(_.typed(fun, funMode(mode), funpt)) match {
+          silent(_.typed(fun, funMode(mode), funpt), 
+                 if ((mode & EXPRmode) != 0) false else context.reportAmbiguousErrors, 
+                 if ((mode & EXPRmode) != 0) tree else context.tree) match {
             case fun1: Tree =>
               val fun2 = if (stableApplication) stabilizeFun(fun1, mode, pt) else fun1
               incCounter(typedApplyCount)
@@ -3334,16 +3531,38 @@ trait Typers { self: Analyzer =>
                 case mt: MethodType => mt.isImplicit
                 case _ => false
               }
+              def removeFunUndets() =
+                context.undetparams = context.undetparams filter { 
+                  case tv: TypeVar => tv.origin.typeSymbol.owner != fun1.symbol
+                  case _ => false
+                }
               val res = 
-                if (phase.id <= currentRun.typerPhase.id &&
+                if (fun1.symbol == EmbeddedControls_ifThenElse) {
+                  removeFunUndets()
+                  val List(cond, t, e) = args
+                  typedIf(cond, t, e)
+                } else if (fun1.symbol == EmbeddedControls_newVar) {
+                  removeFunUndets()
+                  val List(init) = args
+                  typed1(init, mode, pt)
+                } else if (fun1.symbol == EmbeddedControls_return) {
+                  // TODO: methods called __return but not identical to the one in EmbeddedControls
+                  // also need to check conformance to enclosing method's result type.
+                  val List(expr) = args
+                  typedReturn(expr)
+                } else if (fun1.symbol == EmbeddedControls_assign) {
+                  val List(lhs, rhs) = args
+                  typedAssign(lhs, rhs)
+                } else if (phase.id <= currentRun.typerPhase.id &&
                     fun2.isInstanceOf[Select] && 
                     !isImplicitMethod(fun2.tpe) &&
                     ((fun2.symbol eq null) || !fun2.symbol.isConstructor) &&
-                    (mode & (EXPRmode | SNDTRYmode)) == EXPRmode) {
-                      tryTypedApply(fun2, args)
-                    } else {
-                      doTypedApply(tree, fun2, args, mode, pt)
-                    }
+                    (mode & (EXPRmode | SNDTRYmode)) == EXPRmode) 
+                {
+                  tryTypedApply(fun2, args)
+                } else {
+                  doTypedApply(tree, fun2, args, mode, pt)
+                }
             /*
               if (fun2.hasSymbol && fun2.symbol.isConstructor && (mode & EXPRmode) != 0) {
                 res.tpe = res.tpe.notNull
@@ -3355,6 +3574,9 @@ trait Typers { self: Analyzer =>
                 // (calling typed1 more than once for the same tree)
                 if (checked ne res) typed { atPos(tree.pos)(checked) }
                 else res
+              } else if (fun2.symbol == EmbeddedControls_equal) {
+                val List(lhs, rhs) = args
+                typedApply(Select(lhs, nme.EQ) setPos lhs.pos, List(rhs))
               } else res
               /* Would like to do the following instead, but curiously this fails; todo: investigate
               if (fun2.symbol.name == nme.apply && fun2.symbol.owner == ArrayClass) 
@@ -3518,8 +3740,28 @@ trait Typers { self: Analyzer =>
             member(qual, name)
           }
         if (sym == NoSymbol && name != nme.CONSTRUCTOR && (mode & EXPRmode) != 0) {
-          val qual1 = adaptToName(qual, name)
-          if (qual1 ne qual) return typed(treeCopy.Select(tree, qual1, name), mode, pt)
+          val qual1 = try {
+            adaptToName(qual, name)
+          } catch {
+            case ex: TypeError =>
+              // this happens if implicits are ambiguous; try again with more context info.
+              // println("last ditch effort: "+qual+" . "+name) // DEBUG
+              context.tree match {
+                case Apply(tree1, args) if tree1 eq tree => // try handling the arguments
+                  // println("typing args: "+args) // DEBUG
+                  silent(_.typedArgs(args, mode)) match {
+                    case args: List[_] =>
+                      adaptToArguments(qual, name, args.asInstanceOf[List[Tree]], WildcardType)
+                    case _ =>
+                      throw ex
+                  }
+                case _ =>
+                  // println("not in an apply: "+context.tree+"/"+tree) // DEBUG
+                  throw ex
+              }
+          }
+          if (qual1 ne qual) 
+            return typed(treeCopy.Select(tree, qual1, name), mode, pt)
         }
         
         if (!reallyExists(sym)) {

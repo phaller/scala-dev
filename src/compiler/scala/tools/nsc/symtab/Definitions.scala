@@ -141,6 +141,15 @@ trait Definitions extends reflect.generic.StandardDefinitions {
     lazy val StringClass          = getClass(sn.String)
     lazy val ClassClass           = getClass(sn.Class)
       def Class_getMethod = getMember(ClassClass, nme.getMethod_)
+    lazy val EmbeddedControlsClass  = getClass("scala.EmbeddedControls")
+      lazy val EmbeddedControls_ifThenElse = getMember(EmbeddedControlsClass, nme._ifThenElse)
+      lazy val EmbeddedControls_whileDo = getMember(EmbeddedControlsClass, nme._whileDo)
+      lazy val EmbeddedControls_doWhile = getMember(EmbeddedControlsClass, nme._doWhile)
+      lazy val EmbeddedControls_newVar = getMember(EmbeddedControlsClass, nme._newVar)
+      lazy val EmbeddedControls_assign = getMember(EmbeddedControlsClass, nme._assign)
+      lazy val EmbeddedControls_return = getMember(EmbeddedControlsClass, nme._return)
+      lazy val EmbeddedControls_equal = getMember(EmbeddedControlsClass, nme._equal)
+    lazy val ProxyControlsClass  = getClass("scala.ProxyControls")
 
     // fundamental modules
     lazy val PredefModule: Symbol = getModule("scala.Predef")
