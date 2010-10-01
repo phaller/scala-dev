@@ -27,6 +27,9 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
   /** Used for deciding in the IDE whether we can interrupt the compiler */
   protected var activeLocks = 0
 
+  /** Used for debugging only */
+  protected var lockedSyms = collection.immutable.Set[Symbol]()
+
   /** Used to keep track of the recursion depth on locked symbols */
   private var recursionTable = Map.empty[Symbol, Int]
 
@@ -115,6 +118,9 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
       rawannots = annots1
       annots1
     }
+    
+    def setSerializable(): Unit =
+      addAnnotation(AnnotationInfo(SerializableAttr.tpe, Nil, Nil))
 
     def setAnnotations(annots: List[AnnotationInfoBase]): this.type = {
       this.rawannots = annots
@@ -452,6 +458,7 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
         }
       }
 
+    def isSerializable      = hasAnnotation(SerializableAttr)
     def isDeprecated        = hasAnnotation(DeprecatedAttr)
     def deprecationMessage  = getAnnotation(DeprecatedAttr) flatMap { _.stringArg(0) }
     // !!! when annotation arguments are not literal strings, but any sort of 
@@ -530,6 +537,10 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
     /** Is this symbol static (i.e. with no outer instance)? */
     final def isStatic: Boolean =
       hasFlag(STATIC) || isRoot || owner.isStaticOwner
+    
+    /** Is this symbol a static constructor? */
+    final def isStaticConstructor: Boolean =
+      isStaticMember && isClassConstructor
 
     /** Is this symbol a static member of its class? (i.e. needs to be implemented as a Java static?) */
     final def isStaticMember: Boolean = 
@@ -718,6 +729,7 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
         assert(infos.prev eq null, this.name+"infos.prev ne null")
         val tp = infos.info
         //if (settings.debug.value) System.out.println("completing " + this.rawname + tp.getClass());//debug
+
         if ((rawflags & LOCKED) != 0L) { // rolled out once for performance
           lock {
             setInfo(ErrorType)
@@ -731,9 +743,8 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
         try {
           phase = phaseOf(infos.validFrom)
           tp.complete(this)
-          // if (settings.debug.value && runId(validTo) == currentRunId) System.out.println("completed " + this/* + ":" + info*/);//DEBUG
-          unlock()
         } finally {
+          unlock()
           phase = current
         }
         cnt += 1
@@ -1253,6 +1264,8 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
 
     /** The class with the same name in the same package as this module or
      *  case class factory.
+     *  Note: does not work for classes owned by methods, see
+     *  Namers.companionClassOf
      */
     final def companionClass: Symbol = {
       if (this != NoSymbol)
@@ -1269,6 +1282,8 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
 
     /** The module or case class factory with the same name in the same
      *  package as this class.
+     *  Note: does not work for modules owned by methods, see
+     *  Namers.companionModuleOf
      */
     final def companionModule: Symbol =
       if (this.isClass && !this.isAnonymousClass && !this.isRefinementClass)
@@ -1277,6 +1292,8 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
 
     /** For a module its linked class, for a class its linked module or case
      *  factory otherwise.
+     *  Note: does not work for modules owned by methods, see
+     *  Namers.companionModuleOf / Namers.companionClassOf
      */
     final def companionSymbol: Symbol =
       if (isTerm) companionClass

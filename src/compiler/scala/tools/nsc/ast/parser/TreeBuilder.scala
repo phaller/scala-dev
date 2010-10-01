@@ -163,12 +163,12 @@ abstract class TreeBuilder {
     }
     if (isExpr) {
       if (treeInfo.isLeftAssoc(op)) {
-        makeApply(atPos(left.pos union opPos) { Select(stripParens(left), op.encode) }, arguments)
+        makeApply(atPos(opPos union left.pos) { Select(stripParens(left), op.encode) }, arguments)
       } else {
         val x = freshName()
         Block(
           List(ValDef(Modifiers(SYNTHETIC), x, TypeTree(), stripParens(left))),
-          Apply(atPos(right.pos union opPos) { Select(stripParens(right), op.encode) }, List(Ident(x))))
+          Apply(atPos(opPos union right.pos) { Select(stripParens(right), op.encode) }, List(Ident(x))))
       }
     } else {
       Apply(Ident(op.encode), stripParens(left) :: arguments)
@@ -264,7 +264,7 @@ abstract class TreeBuilder {
         case None =>
           atPos(rhs.pos) {
             Apply(
-              Select(rhs, nme.withFilter),
+              Select(rhs, nme.filter),
               List(
                 makeVisitor(
                   List(

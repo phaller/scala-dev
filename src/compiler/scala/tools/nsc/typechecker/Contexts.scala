@@ -102,7 +102,7 @@ trait Contexts { self: Analyzer =>
                                                     // not inherited to child contexts
     var depth: Int = 0
     var imports: List[ImportInfo] = List()   // currently visible imports
-    var openImplicits: List[Type] = List()   // types for which implicit arguments
+    var openImplicits: List[(Type,Symbol)] = List()   // types for which implicit arguments
                                              // are currently searched
     // for a named application block (Tree) the corresponding NamedApplyInfo
     var namedApplyBlockInfo: Option[(Tree, NamedApplyInfo)] = None
@@ -120,6 +120,8 @@ trait Contexts { self: Analyzer =>
 
     var savedTypeBounds: List[(Symbol, Type)] = List() // saved type bounds
        // for type parameters which are narrowed in a GADT
+
+    var typingIndent: String = ""
 
     def undetparams = _undetparams
     def undetparams_=(ps: List[Symbol]) = {
@@ -175,6 +177,7 @@ trait Contexts { self: Analyzer =>
       c.reportAmbiguousErrors = this.reportAmbiguousErrors
       c.reportGeneralErrors = this.reportGeneralErrors
       c.diagnostic = this.diagnostic
+      c.typingIndent = typingIndent
       c.implicitsEnabled = this.implicitsEnabled
       c.checking = this.checking
       c.retyping = this.retyping
@@ -262,7 +265,7 @@ trait Contexts { self: Analyzer =>
     }
 
     private def unitError(pos: Position, msg: String) = 
-      unit.error(pos, if (checking) "**** ERROR DURING INTERNAL CHECKING ****\n" + msg else msg)
+      unit.error(pos, if (checking) "\n**** ERROR DURING INTERNAL CHECKING ****\n" + msg else msg)
 
     def error(pos: Position, err: Throwable) =
       if (reportGeneralErrors) unitError(pos, addDiagString(err.getMessage()))

@@ -30,11 +30,6 @@ trait Infer {
   def isVarArgs(params: List[Symbol]) = !params.isEmpty && isRepeatedParamType(params.last.tpe)
   def isVarArgTpes(formals: List[Type]) = !formals.isEmpty && isRepeatedParamType(formals.last)
 
-  def isWildcard(tp: Type) = tp match {
-    case WildcardType | BoundedWildcardType(_) => true
-    case _ => false
-  }
-
   /** The formal parameter types corresponding to <code>formals</code>.
    *  If <code>formals</code> has a repeated last parameter, a list of
    *  (nargs - params.length + 1) copies of its type is returned.
@@ -176,9 +171,10 @@ trait Infer {
    *  This method seems to be performance critical.
    */
   def normalize(tp: Type): Type = tp match {
-    case mt @ MethodType(params, restpe) if (!restpe.isDependent) =>
-      if (mt.isImplicit) normalize(restpe)
-      else functionType(params map (_.tpe), normalize(restpe))
+    case mt @ MethodType(params, restpe) if mt.isImplicit =>
+      normalize(restpe)
+    case mt @ MethodType(params, restpe) if !restpe.isDependent =>
+      functionType(params map (_.tpe), normalize(restpe))
     case PolyType(List(), restpe) => // nullary method type
       normalize(restpe)
     case ExistentialType(tparams, qtpe) =>
@@ -250,10 +246,13 @@ trait Infer {
       if (sym.isError) {
         tree setSymbol sym setType ErrorType
       } else {
-        def accessError(explanation: String): Tree = 
-          errorTree(tree, underlying(sym).toString() + " cannot be accessed in " +
+        def accessError(explanation: String): Tree = {
+          val realsym = underlying(sym)
+          
+          errorTree(tree, realsym + realsym.locationString + " cannot be accessed in " +
                     (if (sym.isClassConstructor) context.enclClass.owner else pre.widen) +
                     explanation)
+        }
 
         val topClass = context.owner.toplevelClass
         if (context.unit != null)
@@ -268,7 +267,21 @@ trait Infer {
             Console.println(tree)
             Console.println("" + pre + " " + sym.owner + " " + context.owner + " " + context.outer.enclClass.owner + " " + sym.owner.thisType + (pre =:= sym.owner.thisType))
           }
-          accessError("")
+          accessError(
+            if (settings.check.isDefault) "" else {
+              "\n because of an internal error (no accessible symbol):" +
+              "\nsym = " + sym +
+              "\nunderlying(sym) = " + underlying(sym) +
+              "\npre = " + pre +
+              "\nsite = " + site +
+              "\ntree = " + tree + 
+              "\nsym.accessBoundary(sym.owner) = " + sym.accessBoundary(sym.owner) +
+              "\nsym.ownerChain = " + sym.ownerChain +
+              "\nsym.owner.thisType = " + sym.owner.thisType +
+              "\ncontext.owner = " + context.owner +
+              "\ncontext.outer.enclClass.owner = " + context.outer.enclClass.owner
+            }
+          )
         } else {
           if(sym1.isTerm)
             sym1.cookJavaRawInfo() // xform java rawtypes into existentials
@@ -566,7 +579,7 @@ trait Infer {
 
       (tparams, targs).zipped.map{ (tparam, targ) =>
         if (targ.typeSymbol == NothingClass && 
-            (isWildcard(restpe) || notCovariantIn(tparam, restpe))) {
+            (restpe.isWildcard || notCovariantIn(tparam, restpe))) {
           tparam -> None
         } else {
           tparam -> Some(
@@ -1064,8 +1077,7 @@ trait Infer {
      *  first to `strictPt' and then, if this fails, to `lenientPt'. If both
      *  attempts fail, an error is produced.
      */
-    def inferArgumentInstance(tree: Tree, undetparams: List[Symbol],
-                              strictPt: Type, lenientPt: Type) {
+    def inferArgumentInstance(tree: Tree, undetparams: List[Symbol], strictPt: Type, lenientPt: Type) {
       if (inferInfo)
         println("infer argument instance "+tree+":"+tree.tpe+"\n"+
                 "  undetparams = "+undetparams+"\n"+
@@ -1078,19 +1090,20 @@ trait Infer {
       substExpr(tree, undetparams, targs, lenientPt)
     }
 
-    /** Substitute free type variables `undetparams; of polymorphic expression
-     *  <code>tree</code>, given prototype <code>pt</code>.
+
+    /** Infer type arguments `targs` for `tparams` of polymorphic expression in `tree`, given prototype `pt`.
      *
-     *  @param tree ...
-     *  @param undetparams ...
-     *  @param pt ...
+     * Substitute `tparams` to `targs` in `tree`, after adjustment by `adjustTypeArgs`, returning the type parameters that were not determined
+     * If passed, infers against specified type `treeTp` instead of `tree.tp`.
      */
-    def inferExprInstance(tree: Tree, tparams: List[Symbol], pt: Type, keepNothings: Boolean): List[Symbol] = {
+    def inferExprInstance(tree: Tree, tparams: List[Symbol], pt: Type = WildcardType, treeTp0: Type = null, keepNothings: Boolean = true, checkCompat: (Type, Type) => Boolean = isCompatible): List[Symbol] = {
+      val treeTp = if(treeTp0 eq null) tree.tpe else treeTp0 // can't refer to tree in default for treeTp0
       if (inferInfo)
         println("infer expr instance "+tree+":"+tree.tpe+"\n"+
                 "  tparams = "+tparams+"\n"+
                 "  pt = "+pt)
-      val targs = exprTypeArgs(tparams, tree.tpe, pt)
+
+      val targs = exprTypeArgs(tparams, treeTp, pt, checkCompat)
 
       if (keepNothings || (targs eq null)) { //@M: adjustTypeArgs fails if targs==null, neg/t0226
         substExpr(tree, tparams, targs, pt)
@@ -1250,6 +1263,8 @@ trait Infer {
       solve(tvars1, tvars1 map (_.origin.typeSymbol), tvars1 map (x => COVARIANT), false)  
     }
 
+    // this is quite nasty: it destructively changes the info of the syms of e.g., method type params (see #3692, where the type param T's bounds were set to >: T <: T, so that parts looped)
+    // the changes are rolled back by restoreTypeBounds, but might be unintentially observed in the mean time
     def instantiateTypeVar(tvar: TypeVar) {
       val tparam = tvar.origin.typeSymbol
       if (false && 
@@ -1263,7 +1278,8 @@ trait Infer {
       } else {
         val (lo, hi) = instBounds(tvar)
         if (lo <:< hi) {
-          if (!((lo <:< tparam.info.bounds.lo) && (tparam.info.bounds.hi <:< hi))) {
+          if (!((lo <:< tparam.info.bounds.lo) && (tparam.info.bounds.hi <:< hi)) // bounds were improved
+             && tparam != lo.typeSymbolDirect && tparam != hi.typeSymbolDirect) { // don't create illegal cycles
             context.nextEnclosing(_.tree.isInstanceOf[CaseDef]).pushTypeBounds(tparam)
             tparam setInfo TypeBounds(lo, hi)
             if (settings.debug.value) log("new bounds of " + tparam + " = " + tparam.info)

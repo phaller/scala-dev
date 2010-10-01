@@ -389,7 +389,7 @@ trait NamesDefaults { self: Analyzer =>
    * the default getter.
    */
   def defaultGetter(param: Symbol, context: Context): Symbol = {
-    val i = param.owner.paramss.flatten.findIndexOf(p => p.name == param.name) + 1
+    val i = param.owner.paramss.flatten.indexWhere(p => p.name == param.name) + 1
     if (i > 0) {
       if (param.owner.isConstructor) {
         val defGetterName = "init$default$"+ i
@@ -503,25 +503,6 @@ trait NamesDefaults { self: Analyzer =>
         else errorTree(arg, "positional after named argument.")
     }
     (namelessArgs, argPos)
-  }
-
-  /**
-   * Finds the companion module of a class symbol. Calling .companionModule
-   * does not work for classes defined inside methods.
-   */
-  def companionModuleOf(clazz: Symbol, context: Context) = {
-    var res = clazz.companionModule
-    if (res == NoSymbol)
-      res = context.lookup(clazz.name.toTermName, clazz.owner).suchThat(sym =>
-        sym.hasFlag(MODULE) && sym.isCoDefinedWith(clazz))
-    res
-  }
-
-  def companionClassOf(module: Symbol, context: Context) = {
-    var res = module.companionClass
-    if (res == NoSymbol)
-      res = context.lookup(module.name.toTypeName, module.owner).suchThat(_.isCoDefinedWith(module))
-    res
   }
 
   /**

@@ -683,7 +683,7 @@ abstract class RefChecks extends InfoTransform {
           case NoPrefix => ;
           case ThisType(_) => ;
           case ConstantType(_) => ;
-          case DeBruijnIndex(_, _) => ;
+          // case DeBruijnIndex(_, _) => ;
           case SingleType(pre, sym) =>
             validateVariance(pre, variance)
           case TypeRef(pre, sym, args) =>
@@ -966,7 +966,8 @@ abstract class RefChecks extends InfoTransform {
             typed(ValDef(vsym, EmptyTree)) :: typed(lazyDef) :: Nil
         } else {
           if (tree.symbol.isLocal && index <= currentLevel.maxindex && !tree.symbol.hasFlag(LAZY)) {
-            if (settings.debug.value) Console.println(currentLevel.refsym);
+            if (settings.debug.value)
+              Console.println(currentLevel.refsym)
             unit.error(currentLevel.refpos, "forward reference extends over definition of " + tree.symbol);
           }
           List(tree1)

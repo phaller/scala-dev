@@ -55,7 +55,6 @@ trait ScalaSettings extends AbsScalaSettings with StandardScalaSettings {
   val noassertions  = BooleanSetting    ("-Xdisable-assertions", "Generate no assertions and assumptions")
   val elidebelow    = IntSetting        ("-Xelide-below", "Generate calls to @elidable-marked methods only if method priority is greater than argument.",
                                                 elidable.ASSERTION, None, elidable.byName.get(_))
-  val Xexperimental = BooleanSetting    ("-Xexperimental", "Enable experimental extensions")
   val noForwarders  = BooleanSetting    ("-Xno-forwarders", "Do not generate static forwarders in mirror classes")
   val future        = BooleanSetting    ("-Xfuture", "Turn on future language features")
   val genPhaseGraph = StringSetting     ("-Xgenerate-phase-graph", "file", "Generate the phase graphs (outputs .dot files) to fileX.dot", "")
@@ -79,10 +78,18 @@ trait ScalaSettings extends AbsScalaSettings with StandardScalaSettings {
   val Xshowobj      = StringSetting     ("-Xshow-object", "object", "Show object info", "")
   val showPhases    = BooleanSetting    ("-Xshow-phases", "Print a synopsis of compiler phases")
   val sourceReader  = StringSetting     ("-Xsource-reader", "classname", "Specify a custom method for reading source files", "scala.tools.nsc.io.SourceReader")
+
   val Xwarnfatal    = BooleanSetting    ("-Xfatal-warnings", "Fail the compilation if there are any warnings.")
   val Xwarninit     = BooleanSetting    ("-Xwarninit", "Warn about possible changes in initialization semantics")
   val Xchecknull    = BooleanSetting    ("-Xcheck-null", "Emit warning on selection of nullable reference")
-  
+
+  // Experimental Extensions
+  val Xexperimental = BooleanSetting    ("-Xexperimental", "Enable experimental extensions") .
+                          withPostSetHook(_ => List(YdepMethTpes, YmethodInfer) foreach (_.value = true)) //YvirtClasses, 
+  val YdepMethTpes  = BooleanSetting    ("-Ydependent-method-types", "Allow dependent method types")
+  val YmethodInfer  = BooleanSetting    ("-Yinfer-argument-types", "Infer types for arguments of overriden methods")
+  val YvirtClasses  = false // too embryonic to even expose as a -Y //BooleanSetting    ("-Yvirtual-classes", "Support virtual classes")
+
   /** Compatibility stubs for options whose value name did
    *  not previously match the option name.
    */
@@ -99,6 +106,7 @@ trait ScalaSettings extends AbsScalaSettings with StandardScalaSettings {
   val Yhelp         = BooleanSetting    ("-Y", "Print a synopsis of private options")
   val browse        = PhasesSetting     ("-Ybrowse", "Browse the abstract syntax tree after")
   val check         = PhasesSetting     ("-Ycheck", "Check the tree at the end of")
+  val checkDebug    = BooleanSetting    ("-Ycheck-debug", "Lots of extra output for -Ycheck")
   val Xcloselim     = BooleanSetting    ("-Yclosure-elim", "Perform closure elimination")
   val Ycompacttrees = BooleanSetting    ("-Ycompact-trees", "Use compact tree printer when displaying trees")
   val noCompletion  = BooleanSetting    ("-Yno-completion", "Disable tab-completion in the REPL")
