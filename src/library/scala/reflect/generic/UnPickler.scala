@@ -191,18 +191,28 @@ abstract class UnPickler {
           // right member => return NoSymbol. This can only happen when unpickling a tree.
           // the "case Apply" in readTree() takes care of selecting the correct alternative
           //  after parsing the arguments.
-          if (sym == NoSymbol && !owner.isOverloaded) errorMissingRequirement(name, owner)
+          if (sym == NoSymbol && !owner.isOverloaded) {
+            // Possibly a nested object symbol
+            tag match {
+              case EXTMODCLASSref =>
+                val moduleVar = owner.info.decl(nme.moduleVarName(name))
+                if (moduleVar.hasFlag(LAZY)) {
+                  val lazyAcc = moduleVar.lazyAccessor
+                  if (lazyAcc != NoSymbol)
+                    sym = lazyAcc.lazyAccessor
+                }
+              case _ =>
+            }
+              
+            if (sym == NoSymbol)
+              errorMissingRequirement(name, owner)
+          }
             
         case NONEsym =>
           sym = NoSymbol
 
         case _ => // symbols that were pickled with Pickler.writeSymInfo
-          var defaultGetter: Symbol = NoSymbol // @deprecated, to be removed for 2.8 final
           var nameref = readNat()
-          if (tag == VALsym && isSymbolRef(nameref)) {  // @deprecated, to be removed for 2.8 final
-            defaultGetter = at(nameref, readSymbol)
-            nameref = readNat()
-          }
           val name = at(nameref, readName)
           val owner = readSymbolRef()
           val flags = pickledToRawFlags(readLongNat())

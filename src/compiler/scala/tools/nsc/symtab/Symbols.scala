@@ -7,14 +7,12 @@
 package scala.tools.nsc
 package symtab
 
+import scala.collection.{ mutable, immutable }
 import scala.collection.mutable.ListBuffer
-import scala.collection.immutable.Map
 import io.AbstractFile
-import util.{Position, NoPosition, BatchSourceFile}
+import util.{ Position, NoPosition, BatchSourceFile }
 import util.Statistics._
 import Flags._
-
-//todo: get rid of MONOMORPHIC flag
 
 trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
   import definitions._
@@ -31,7 +29,7 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
   protected var lockedSyms = collection.immutable.Set[Symbol]()
 
   /** Used to keep track of the recursion depth on locked symbols */
-  private var recursionTable = Map.empty[Symbol, Int]
+  private var recursionTable = immutable.Map.empty[Symbol, Int]
 
   private var nextexid = 0
   private def freshExistentialName() = {
@@ -415,10 +413,9 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
     final def isInitializedToDefault = !isType && (getFlag(DEFAULTINIT | ACCESSOR) == (DEFAULTINIT | ACCESSOR))
     final def isClassConstructor = isTerm && (name == nme.CONSTRUCTOR)
     final def isMixinConstructor = isTerm && (name == nme.MIXIN_CONSTRUCTOR)
-    final def isConstructor = isTerm && (name == nme.CONSTRUCTOR) || (name == nme.MIXIN_CONSTRUCTOR)
+    final def isConstructor = isTerm && nme.isConstructorName(name)
     final def isStaticModule = isModule && isStatic && !isMethod
     final def isThisSym = isTerm && owner.thisSym == this
-    //final def isMonomorphicType = isType && hasFlag(MONOMORPHIC)
     final def isError = hasFlag(IS_ERROR)
     final def isErroneous = isError || isInitialized && tpe.isErroneous
     override final def isTrait: Boolean = isClass && hasFlag(TRAIT | notDEFERRED)     // A virtual class becomes a trait (part of DEVIRTUALIZE)
@@ -1275,10 +1272,13 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
 
     /** A helper method that factors the common code used the discover a companion module of a class. If a companion
       * module exists, its symbol is returned, otherwise, `NoSymbol` is returned. The method assumes that `this`
-      * symbol has already been checked to be a class (using `isClass`). */
-    private final def companionModule0: Symbol =
+      * symbol has already been checked to be a class (using `isClass`).
+      * After refchecks nested objects get transformed to lazy vals so we filter on LAZY flag*/
+    private final def companionModule0: Symbol = {
+      val f = if (phase.refChecked && isNestedClass) LAZY else MODULE
       flatOwnerInfo.decl(name.toTermName).suchThat(
-          sym => (sym hasFlag MODULE) && (sym isCoDefinedWith this))
+        sym => (sym hasFlag f) && (sym isCoDefinedWith this))
+    }
 
     /** The module or case class factory with the same name in the same
      *  package as this class.
@@ -1488,10 +1488,13 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
     /** If this is a sealed class, its known direct subclasses. Otherwise Set.empty */
     def children: List[Symbol] = Nil
     
-    /** Recursively finds all sealed descendants and returns a sorted list. */
+    /** Recursively finds all sealed descendants and returns a sorted list.
+     *  Includes this symbol unless it is abstract, but as value classes are
+     *  marked abstract so they can't be instantiated, they are special cased.
+     */
     def sealedDescendants: List[Symbol] = {
       val kids = children flatMap (_.sealedDescendants)
-      val all = if (this hasFlag ABSTRACT) kids else this :: kids
+      val all = if (isAbstractClass && !isValueClass(this)) kids else this :: kids
       
       all.distinct sortBy (_.sealedSortName)
     }
@@ -1857,12 +1860,6 @@ trait Symbols extends reflect.generic.Symbols { self: SymbolTable =>
     override def info_=(tp: Type) {
       tpePeriod = NoPeriod
       tyconCache = null
-      if (tp.isComplete)
-        tp match {
-          case PolyType(_, _) => resetFlag(MONOMORPHIC)
-          case NoType | AnnotatedType(_, _, _) => ;
-          case _ => setFlag(MONOMORPHIC)
-        }
       super.info_=(tp)
     }
 

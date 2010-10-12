@@ -13,12 +13,11 @@ import java.net.{ MalformedURLException, URL }
 import java.lang.reflect
 import reflect.InvocationTargetException
 
+import scala.collection.{ mutable, immutable }
 import scala.PartialFunction.{ cond, condOpt }
 import scala.tools.util.PathResolver
 import scala.reflect.Manifest
-import scala.collection.mutable
 import scala.collection.mutable.{ ListBuffer, HashSet, HashMap, ArrayBuffer }
-import scala.collection.immutable.Set
 import scala.tools.nsc.util.ScalaClassLoader
 import ScalaClassLoader.URLClassLoader
 import scala.util.control.Exception.{ Catcher, catching, ultimately, unwrapping }
@@ -774,8 +773,6 @@ class Interpreter(val settings: Settings, out: PrintWriter) {
     }
     
     private def selectorWild    = selectors filter (_.name == USCOREkw)   // wildcard imports, e.g. import foo._
-    private def selectorMasked  = selectors filter (_.rename == USCOREkw) // masking imports, e.g. import foo.{ bar => _ }      
-    private def selectorNames   = selectors map (_.name)
     private def selectorRenames = selectors map (_.rename) filterNot (_ == null)
     
     /** Whether this import includes a wildcard import */

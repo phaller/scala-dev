@@ -136,8 +136,10 @@ trait SyntheticMethods extends ast.TreeDSL {
       }
     }
     
-    def hashCodeTarget: Name = nme.hashCode_
-      // if (settings.Yjenkins.value) "hashCodeJenkins" else nme.hashCode_
+    // XXX short term, expecting to make murmur the default as soon as it is put through some paces.
+    def hashCodeTarget: Name = 
+      if (settings.Ymurmur.value) "hashCodeMurmur"
+      else nme.hashCode_
 
     /** The equality method for case modules:
      *   def equals(that: Any) = this eq that
@@ -227,6 +229,14 @@ trait SyntheticMethods extends ast.TreeDSL {
         log("new accessor method " + result)
         result
     }
+    
+    def needsReadResolve = (
+      // only nested objects inside objects should get readResolve automatically
+      // otherwise after de-serialization we get null references for lazy accessors (nested object -> lazy val + class def)
+      // since the bitmap gets serialized but the moduleVar not
+      clazz.isSerializable &&
+      ((!clazz.owner.isPackageClass && clazz.owner.isModuleClass) || clazz.owner.isPackageClass)
+    )
 
     // A buffer collecting additional methods for the template body
     val ts = new ListBuffer[Tree]
@@ -302,7 +312,7 @@ trait SyntheticMethods extends ast.TreeDSL {
          *  the readResolve() method (see http://www.javaworld.com/javaworld/
          *  jw-04-2003/jw-0425-designpatterns_p.html)
          */
-        if (clazz.isSerializable && !hasReadResolve) {
+        if (!hasReadResolve && needsReadResolve){
           // PP: To this day I really can't figure out what this next comment is getting at:
           // the !!! normally means there is something broken, but if so, what is it?
           //

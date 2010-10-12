@@ -9,7 +9,7 @@ package transform
 import symtab._
 import Flags._
 import util.TreeSet
-import scala.collection.mutable.{HashMap, LinkedHashMap, ListBuffer}
+import scala.collection.mutable.{ LinkedHashMap, ListBuffer }
 
 abstract class LambdaLift extends InfoTransform {
   import global._
@@ -153,7 +153,7 @@ abstract class LambdaLift extends InfoTransform {
           }
           changedFreeVars = true
           if (settings.debug.value) log("" + sym + " is free in " + owner);
-          if (sym.isVariable && !(sym hasFlag CAPTURED)) {
+          if ((sym.isVariable || (sym.isValue && sym.isLazy)) && !sym.hasFlag(CAPTURED)) {
             sym setFlag CAPTURED
             val symClass = sym.tpe.typeSymbol;
             atPhase(phase.next) {
