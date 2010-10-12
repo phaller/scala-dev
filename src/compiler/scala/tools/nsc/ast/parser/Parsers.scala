@@ -2176,7 +2176,7 @@ self =>
         if (tp.isEmpty || in.token == EQUALS) {
           accept(EQUALS)
           if (!tp.isEmpty && (newmods hasFlag Flags.MUTABLE) && 
-              (lhs.toList forall (_.isInstanceOf[Ident])) && in.token == USCORE) 
+              (lhs.toList forall (_.isInstanceOf[Ident])) && in.token == USCORE)
           {
             in.nextToken()
             newmods = newmods | Flags.DEFAULTINIT

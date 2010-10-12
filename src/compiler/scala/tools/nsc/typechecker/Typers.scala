@@ -3375,9 +3375,11 @@ trait Typers { self: Analyzer =>
 
         val ealts = silent(_.typed(Ident(extname).setPos(fun.pos), funMode(mode), WildcardType), false, tree) match {
           case ext: Tree =>
-            // do not make an external method accessible through the operator within its own body (HACK ?)
-            ext.symbol.alternatives.filter(s => s.isMethod && s != context.enclMethod.tree.symbol &&
-              s.owner != EmbeddedControlsClass) // meths in embeddings trait are sentinels added by a typedApply further up the stack
+            ext.symbol.alternatives.filter { s => 
+              s.isMethod && 
+              s.owner != EmbeddedControlsClass &&  // meths in embeddings trait are sentinels added by a typedApply further up the stack
+              ((context.enclMethod.tree eq null) || s != context.enclMethod.tree.symbol) // do not make an external method accessible through the operator within its own body (HACK ?)
+            }
           case _ => Nil
         }
 
