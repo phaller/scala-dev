@@ -73,12 +73,10 @@ self =>
     val in = new UnitScanner(unit, patches)
     in.init()
 
-    def freshName(pos: Position, prefix: String): Name =
-      unit.fresh.newName(pos, prefix)
+    def freshName(prefix: String): Name = unit.fresh.newName(prefix)
 
     def o2p(offset: Int): Position = new OffsetPosition(unit.source,offset)
     def r2p(start: Int, mid: Int, end: Int): Position = rangePos(unit.source, start, mid, end)
-
     def warning(offset: Int, msg: String) { unit.warning(o2p(offset), msg) }
 
     def deprecationWarning(offset: Int, 
@@ -150,18 +148,12 @@ self =>
 
   abstract class Parser {
     val in: Scanner
-    //val unit : CompilationUnit
-    //import in.ScanPosition
-    def freshName(pos: Position, prefix: String): Name
-    def freshName(prefix: String): Name = freshName(NoPosition, prefix) // todo get rid of position
 
+    def freshName(prefix: String): Name
     def o2p(offset: Int): Position
     def r2p(start: Int, mid: Int, end: Int): Position
-    //private implicit def p2i(pos: Position) = pos.offset.get
     
     /** whether a non-continuable syntax error has been seen */
-    //private var syntaxErrorSeen = false 
-
     private var lastErrorOffset : Int = -1
 
     object treeBuilder extends TreeBuilder {
@@ -902,6 +894,9 @@ self =>
       infixTypeRest(compoundType(isPattern), isPattern, mode)
     }
 
+    def typeOrInfixType(location: Int): Tree = 
+      if (location == Local) typ() else infixType(false, InfixMode.FirstOp) 
+
     def infixTypeRest(t: Tree, isPattern: Boolean, mode: InfixMode.Value): Tree = {
       if (isIdent && in.name != nme.STAR) {
         val opOffset = in.offset
@@ -1002,7 +997,7 @@ self =>
     /** WildcardType ::= `_' TypeBounds
      */
     def wildcardType(start: Int) = {
-      val pname = freshName(o2p(start), "_$").toTypeName
+      val pname = freshName("_$").toTypeName
       val t = atPos(start) { Ident(pname) }
       val bounds = typeBounds()
       val param = atPos(t.pos union bounds.pos) { makeSyntheticTypeParam(pname, bounds) }
@@ -1142,7 +1137,7 @@ self =>
       case WHILE =>
         val start = in.offset
         atPos(in.skipToken()) {
-          //val lname: Name = freshName(o2p(start), nme.WHILE_PREFIX)
+          //val lname: Name = freshName(nme.WHILE_PREFIX)
           val cond = condExpr()
           newLinesOpt()
           val body = expr()
@@ -1151,7 +1146,7 @@ self =>
       case DO =>
         val start = in.offset
         atPos(in.skipToken()) {
-          //val lname: Name = freshName(o2p(start), nme.DO_WHILE_PREFIX)
+          //val lname: Name = freshName(nme.DO_WHILE_PREFIX)
           val body = expr()
           if (isStatSep) in.nextToken()
           accept(WHILE)
@@ -1206,8 +1201,7 @@ self =>
             t = (t /: annotations(false, false)) (makeAnnotated)
           } else {
             t = atPos(t.pos.startOrPoint, colonPos) { 
-              val tpt = 
-                if (location == Local) typ() else infixType(false, InfixMode.FirstOp) 
+              val tpt = typeOrInfixType(location)
               if (isWildcard(t))
                 (placeholderParams: @unchecked) match {
                   case (vd @ ValDef(mods, name, _, _)) :: rest => 
@@ -1246,7 +1240,16 @@ self =>
     /** Expr ::= implicit Id => Expr
      */
     def implicitClosure(start: Int, location: Int): Tree = {
-      val param0 = convertToParam(atPos(in.offset)(Ident(ident())))
+      val param0 = convertToParam {
+        atPos(in.offset) {
+          var paramexpr: Tree = Ident(ident())
+          if (in.token == COLON) {
+            in.nextToken()
+            paramexpr = Typed(paramexpr, typeOrInfixType(location))
+          }
+          paramexpr
+        }
+      }
       val param = treeCopy.ValDef(param0, param0.mods | Flags.IMPLICIT, param0.name, param0.tpt, param0.rhs)
       atPos(start, in.offset) {
         accept(ARROW)
@@ -1326,7 +1329,7 @@ self =>
           path(true, false)
         case USCORE =>
           val start = in.offset
-          val pname = freshName(o2p(start), "x$")
+          val pname = freshName("x$")
           in.nextToken()
           val id = atPos(start) (Ident(pname))
           val param = atPos(id.pos.focus){ makeSyntheticParam(pname) }

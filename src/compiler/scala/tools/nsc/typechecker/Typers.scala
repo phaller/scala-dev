@@ -32,7 +32,8 @@ trait Typers { self: Analyzer =>
 
   // namer calls typer.computeType(rhs) on DefDef / ValDef when tpt is empty. the result
   // is cached here and re-used in typedDefDef / typedValDef
-  private val transformed = new HashMap[Tree, Tree]
+  // Also used to cache imports type-checked by namer.
+  val transformed = new HashMap[Tree, Tree]
 
   // currently not used at all (March 09)
   private val superDefs = new HashMap[Symbol, ListBuffer[Tree]]
@@ -109,7 +110,7 @@ trait Typers { self: Analyzer =>
   val TAPPmode      = 0x080
 
   /** The mode <code>SUPERCONSTRmode</code> is set for the <code>super</code>
-   *  in a superclass constructor call <code>super.&lt;init&gt;</code>.
+   *  in a superclass constructor call <code>super.<init></code>.
    */
   val SUPERCONSTRmode = 0x100
 
@@ -168,11 +169,11 @@ trait Typers { self: Analyzer =>
     import context0.unit
 
     val infer = new Inferencer(context0) {
-      override def isCoercible(tp: Type, pt: Type): Boolean =
+      override def isCoercible(tp: Type, pt: Type): Boolean = undoLog undo { // #3281
         tp.isError || pt.isError ||
         context0.implicitsEnabled && // this condition prevents chains of views
         inferView(EmptyTree, tp, pt, false) != EmptyTree
-    }
+      }}
 
     /** Find implicit arguments and pass them to given tree.
      */
@@ -682,7 +683,7 @@ trait Typers { self: Analyzer =>
     /** The member with given name of given qualifier tree */
     def member(qual: Tree, name: Name) = qual.tpe match {
       case ThisType(clazz) if (context.enclClass.owner.hasTransOwner(clazz)) =>
-      	// println("member")
+        // println("member "+qual.tpe+" . "+name+" "+qual.tpe.getClass)
         qual.tpe.member(name)
       case _  =>
         if (phase.next.erasedTypes) qual.tpe.member(name)
@@ -1748,7 +1749,7 @@ trait Typers { self: Analyzer =>
       // for `val` and `var` parameter, look at `target` meta-annotation
       if (phase.id <= currentRun.typerPhase.id && meth.isPrimaryConstructor) {
         for (vparams <- ddef.vparamss; vd <- vparams) {
-          if (vd hasFlag PARAMACCESSOR) {
+          if (vd.mods.isParamAccessor) {
             val sym = vd.symbol
             sym.setAnnotations(memberAnnots(sym.annotations, ParamTargetClass, keepClean = true))
           }
@@ -1917,7 +1918,7 @@ trait Typers { self: Analyzer =>
           // The cleanest way forward is if we would find a way to suppress
           // structural type checking for these members and maybe defer 
           // type errors to the places where members are called. But that would
-          // be a bug refactoring and also a  big departure from existing code.
+          // be a big refactoring and also a  big departure from existing code.
           // The probably safest fix for 2.8 is to keep members of an anonymous
           // class that are not mentioned in a parent type private (as before)
           // but to disable escape checking for code that's in the same anonymous class.
@@ -2093,7 +2094,10 @@ trait Typers { self: Analyzer =>
       namer.enterSyms(stats)
       // need to delay rest of typedRefinement to avoid cyclic reference errors
       unit.toCheck += { () =>
-        val stats1 = typedStats(stats, NoSymbol)
+        // go to next outer context which is not silent, see #3614
+        var c = context
+        while (!c.reportGeneralErrors) c = c.outer
+        val stats1 = newTyper(c).typedStats(stats, NoSymbol)
         for (stat <- stats1 if stat.isDef) {
           val member = stat.symbol
           if (!(context.owner.ancestors forall
@@ -2104,7 +2108,10 @@ trait Typers { self: Analyzer =>
       }
     }
 
-    def typedImport(imp : Import) : Import = imp
+    def typedImport(imp : Import) : Import = (transformed remove imp) match {
+      case Some(imp1: Import) => imp1
+      case None => println("unhandled impoprt: "+imp+" in "+unit); imp
+    }
 
     def typedStats(stats: List[Tree], exprOwner: Symbol): List[Tree] = {
       val inBlock = exprOwner == context.owner
@@ -2117,13 +2124,9 @@ trait Typers { self: Analyzer =>
         else 
           stat match {
             case imp @ Import(_, _) =>
-              val imp0 = typedImport(imp)
-              if (imp0 ne null) {
-                context = context.makeNewImport(imp0)
-                imp0.symbol.initialize
-                imp0
-              } else
-                EmptyTree
+              context = context.makeNewImport(imp)
+              imp.symbol.initialize
+              typedImport(imp)
             case _ =>
               if (localTarget && !includesTargetPos(stat)) { 
                 // skip typechecking of statements in a sequence where some other statement includes
@@ -3889,9 +3892,12 @@ trait Typers { self: Analyzer =>
         def ambiguousError(msg: String) =
           error(tree.pos, "reference to " + name + " is ambiguous;\n" + msg)
 
-        var defSym: Symbol = tree.symbol // the directly found symbol
-        var pre: Type = NoPrefix         // the prefix type of defSym, if a class member
-        var qual: Tree = EmptyTree       // the qualifier tree if transformed tree is a select
+        var defSym: Symbol = tree.symbol  // the directly found symbol
+        var pre: Type = NoPrefix          // the prefix type of defSym, if a class member
+        var qual: Tree = EmptyTree        // the qualifier tree if transformed tree is a select
+        var inaccessibleSym: Symbol = NoSymbol // the first symbol that was found but that was discarded
+                                          // for being inaccessible; used for error reporting
+        var inaccessibleExplanation: String = ""
 
         // A symbol qualifies if it exists and is not stale. Stale symbols
         // are made to disappear here. In addition,
@@ -3924,7 +3930,13 @@ trait Typers { self: Analyzer =>
               cx = cx.enclClass
               defSym = pre.member(name) filter (
                 sym => qualifies(sym) && context.isAccessible(sym, pre, false))
-              if (defSym == NoSymbol) cx = cx.outer
+              if (defSym == NoSymbol) {
+                if (inaccessibleSym eq NoSymbol) {
+                  inaccessibleSym = pre.member(name) filter qualifies
+                  inaccessibleExplanation = analyzer.lastAccessCheckDetails
+                }
+                cx = cx.outer
+              }
             }
           }
 
@@ -3994,7 +4006,11 @@ trait Typers { self: Analyzer =>
               if (settings.debug.value) {
                 log(context.imports)//debug
               }
-              error(tree.pos, "not found: "+decodeWithNamespace(name))
+              if (inaccessibleSym eq NoSymbol) {
+                error(tree.pos, "not found: "+decodeWithNamespace(name))
+              } else accessError(
+                tree, inaccessibleSym, context.enclClass.owner.thisType, 
+                inaccessibleExplanation)
               defSym = context.owner.newErrorSymbol(name)
             }
           }
@@ -4055,8 +4071,8 @@ trait Typers { self: Analyzer =>
                       glb(List(arg.symbol.info.bounds.hi, tparam.info.bounds.hi.subst(tparams, argtypes))))
               case _ =>
             }}
-
-            val result = TypeTree(appliedType(tpt1.tpe, argtypes)) setOriginal(tree) // setPos tree.pos (done by setOriginal)
+            val original = treeCopy.AppliedTypeTree(tree, tpt1, args1)
+            val result = TypeTree(appliedType(tpt1.tpe, argtypes)) setOriginal  original
             if(tpt1.tpe.isInstanceOf[PolyType]) // did the type application (performed by appliedType) involve an unchecked beta-reduction?
               (TypeTreeWithDeferredRefCheck(){ () =>
                 // wrap the tree and include the bounds check -- refchecks will perform this check (that the beta reduction was indeed allowed) and unwrap
@@ -4144,7 +4160,7 @@ trait Typers { self: Analyzer =>
         case Star(elem) =>
           checkStarPatOK(tree.pos, mode)
           val elem1 = typed(elem, mode, pt)
-          treeCopy.Star(tree, elem1) setType pt
+          treeCopy.Star(tree, elem1) setType makeFullyDefined(pt)
 
         case Bind(name, body) =>
           typedBind(name, body)
