@@ -3358,9 +3358,11 @@ trait Typers { self: Analyzer =>
       }
       
       def typedApplyExternal(fun: Select, args: List[Tree], isApply: Boolean): Tree = {
+        val infixDebug = System.getProperty("infixVerbose") == "true"
+        
         val Select(qual, name) = fun
         val extname = "infix_" + name
-        //println("contemplating " + mode.toHexString + "/" + fun.symbol + ": " + Apply(fun, args) + " ---> " + Apply(Ident(extname), qual::args))
+        if (infixDebug) println("contemplating " + mode.toHexString + "/" + fun.symbol + ": " + Apply(fun, args) + " ---> " + Apply(Ident(extname), qual::args) + " at " + fun.pos)
 
         //println("fun.tpe: "+fun.tpe)
         //println("qual.tpe: "+qual.tpe)
@@ -3437,7 +3439,7 @@ trait Typers { self: Analyzer =>
             //println("found member: " + ms)
 
           val dalts = ms.alternatives.filter(_.isMethod)
-          //println("found declared alternatives: " + dalts)
+          if (infixDebug) println("found declared alternatives: " + dalts + "/" + dalts.map(_.tpe))
 
           if (!dalts.isEmpty) {
             // both declared and external methods: temporarily add declared methods
@@ -3449,14 +3451,17 @@ trait Typers { self: Analyzer =>
               val sentinel = EmbeddedControlsClass.newMethod(extname).setPos(msym.pos)
 
               val params1 = msym.tpe.params
-              val resultType = msym.tpe.resultType
-              //var receiverType = qual1.tpe // this should really be the owner of msym
-              val receiverTypePoly = msym.owner.tpe
-              val receiverTypeParams = receiverTypePoly.typeParams.map(p => sentinel.newTypeParameter(p.pos, p.name))
-              val methodTypeParams = msym.tpe.typeParams.map(p => sentinel.newTypeParameter(p.pos, p.name))
+              val resultType = msym.tpe.finalResultType
+
+              // note: msym.owner.tpe is actually a type ref --> need to take .info to access its type parameters
+              val receiverTypePoly = msym.owner.info
+              
+              val receiverTypeParams = receiverTypePoly.typeParams.map(p => sentinel.newTypeParameter(p.pos, p.name).setInfo(p.info))
+              val methodTypeParams = msym.info.typeParams.map(p => sentinel.newTypeParameter(p.pos, p.name).setInfo(p.info))
               val typeParams = methodTypeParams ::: receiverTypeParams
-              val receiverType = if (receiverTypeParams.isEmpty) receiverTypePoly
-                else typeRef(receiverTypePoly.prefix, msym.owner, receiverTypeParams.map(_.tpe))
+              val receiverType = typeRef(NoPrefix, msym.owner, receiverTypeParams.map(_.tpe))
+
+              // TODO: types of arguments may depend on original class or method type params. Need to substitute those??
           
               val params2 = sentinel.newSyntheticValueParam(ttrans(receiverType)) :: 
                       sentinel.newSyntheticValueParams(params1.map(s=>ttrans(s.tpe)))
@@ -3486,12 +3491,16 @@ trait Typers { self: Analyzer =>
             // PROBLEM: nesting. if arguments add the same sentinels, we have duplicates -> ambiguous error!
             // check for existence first ...
             
-            //println("found external methods: " + ealts)
+            if (infixDebug) {
+              println("found external methods: " + ealts + "/" + ealts.map(_.tpe))
 
-            //println("found existing sentinels: " + installed + "/" + installed.map(_.tpe))
+              println("found existing sentinels: " + installed + "/" + installed.map(_.tpe))
       
-            //println("created plain sentinel methods: " + sentinelsPlain + "/" + sentinelsPlain.map(_.tpe))
-            //println("created lifted sentinel methods: " + sentinelsLifted + "/" + sentinelsLifted.map(_.tpe))
+              println("created plain sentinel methods: " + sentinelsPlain + "/" + sentinelsPlain.map(_.tpe))
+              println("created lifted sentinel methods: " + sentinelsLifted + "/" + sentinelsLifted.map(_.tpe))
+
+              println("trying "+Apply(Ident(extname), qual1::args))
+            }
 
             val r = silent(_.typed(Apply(Ident(extname).setPos(fun.pos), qual1::args).setPos(tree.pos), mode, /*pt*/WildcardType), true, tree) // ambiguity is an error
             for (s <- sentinelsPlain ::: sentinelsLifted if !installed.contains(s)) { // TODO: use diff instead of contains
