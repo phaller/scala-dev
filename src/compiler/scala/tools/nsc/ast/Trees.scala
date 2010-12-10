@@ -17,6 +17,8 @@ trait Trees extends reflect.generic.Trees { self: SymbolTable =>
     var body: Tree
     val source: SourceFile
     def fresh : FreshNameCreator
+    def freshTermName(prefix: String): TermName
+    def freshTypeName(prefix: String): TypeName
   }
 
   type CompilationUnit <: CompilationUnitTrait
@@ -36,25 +38,24 @@ trait Trees extends reflect.generic.Trees { self: SymbolTable =>
   implicit def treeWrapper(tree: Tree): TreeOps = new TreeOps(tree)
 
   class TreeOps(tree: Tree) {
-
     def isTerm: Boolean = tree match {
-      case _: TermTree => true
-      case Bind(name, _) => name.isTermName
-      case Select(_, name) => name.isTermName
-      case Ident(name) => name.isTermName
+      case _: TermTree       => true
+      case Bind(name, _)     => name.isTermName
+      case Select(_, name)   => name.isTermName
+      case Ident(name)       => name.isTermName
       case Annotated(_, arg) => arg.isTerm
-      case DocDef(_, defn) => defn.isTerm
-      case _ => false
+      case DocDef(_, defn)   => defn.isTerm
+      case _                 => false
     }
 
     def isType: Boolean = tree match {
-      case _: TypTree => true
-      case Bind(name, _) => name.isTypeName
-      case Select(_, name) => name.isTypeName
-      case Ident(name) => name.isTypeName
+      case _: TypTree        => true
+      case Bind(name, _)     => name.isTypeName
+      case Select(_, name)   => name.isTypeName
+      case Ident(name)       => name.isTypeName
       case Annotated(_, arg) => arg.isType
-      case DocDef(_, defn) => defn.isType
-      case _ => false
+      case DocDef(_, defn)   => defn.isType
+      case _                 => false
     }
 
     def isErroneous = (tree.tpe ne null) && tree.tpe.isErroneous
@@ -95,7 +96,7 @@ trait Trees extends reflect.generic.Trees { self: SymbolTable =>
           case (xs: List[_], ys: List[_]) => (xs corresponds ys)(equals0)
           case _                          => this0 == that0
         }
-        def compareOriginals() = (this, that) match {
+        def compareOriginals() = (tree, that) match {
           case (x: TypeTree, y: TypeTree) if x.original != null && y.original != null =>
             (x.original equalsStructure0 y.original)(f)
           case _                          =>
@@ -263,7 +264,7 @@ trait Trees extends reflect.generic.Trees { self: SymbolTable =>
         if (vparamss1.isEmpty || !vparamss1.head.isEmpty && vparamss1.head.head.mods.isImplicit)
           vparamss1 = List() :: vparamss1;
         val superRef: Tree = atPos(superPos) {
-          Select(Super(nme.EMPTY.toTypeName, nme.EMPTY.toTypeName), nme.CONSTRUCTOR)
+          Select(Super(tpnme.EMPTY, tpnme.EMPTY), nme.CONSTRUCTOR)
         }
         val superCall = (superRef /: argss) (Apply)
         List(
@@ -353,7 +354,7 @@ trait Trees extends reflect.generic.Trees { self: SymbolTable =>
 
   case class Parens(args: List[Tree]) extends Tree // only used during parsing
 
-  /** emitted by typer, eliminated by refchecks **/
+  /** emitted by typer, eliminated by refchecks */
   case class TypeTreeWithDeferredRefCheck()(val check: () => TypeTree) extends AbsTypeTree
 
 // ----- subconstructors --------------------------------------------

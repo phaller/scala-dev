@@ -303,7 +303,7 @@ abstract class CPSAnnotationChecker extends CPSUtils {
     
       for ((a,tp) <- args.zip(formals ::: List.fill(overshoot)(NoType))) yield {
         tp match {
-          case TypeRef(_, sym, List(elemtp)) if sym == ByNameParamClass =>
+          case TypeRef(_, ByNameParamClass, List(elemtp)) =>
             Nil // TODO: check conformance??
           case _ =>
             List(a)
@@ -326,7 +326,7 @@ abstract class CPSAnnotationChecker extends CPSUtils {
     def single(xs: List[AnnotationInfo]) = xs match {
       case List(x) => x
       case _ =>
-        global.error("not a single cps annotation: " + xs)// FIXME: error message
+        global.globalError("not a single cps annotation: " + xs)// FIXME: error message
         xs(0)
     }
 

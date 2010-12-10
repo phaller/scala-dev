@@ -1,5 +1,7 @@
 src/scala/collection/parallel/Benchmarking.scala
 src/scala/collection/parallel/benchmarks/parallel_view/SeqViewBenches.scala
+src/scala/collection/parallel/benchmarks/hashtables/ParallelHashTables.scala
+src/scala/collection/parallel/benchmarks/hashtables/ParallelHashTableSets.scala
 src/scala/collection/parallel/benchmarks/arrays/ObjectAccess.scala
 src/scala/collection/parallel/benchmarks/arrays/IntAccess.scala
 src/scala/collection/parallel/benchmarks/arrays/Resetting.scala
@@ -33,6 +35,7 @@ src/scala/collection/parallel/benchmarks/parallel_array/ReducePrime.scala
 src/scala/collection/parallel/benchmarks/parallel_array/DropMany.scala
 src/scala/collection/parallel/benchmarks/parallel_array/ReduceList.scala
 src/scala/collection/parallel/benchmarks/parallel_array/ForeachLight.scala
+src/scala/collection/parallel/benchmarks/parallel_array/ScanMedium.scala
 src/scala/collection/parallel/benchmarks/parallel_array/MatrixMultiplication.scala
 src/scala/collection/parallel/benchmarks/parallel_array/SliceMedium.scala
 src/scala/collection/parallel/benchmarks/parallel_array/ReverseMap.scala

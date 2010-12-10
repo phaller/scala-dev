@@ -206,7 +206,7 @@ trait Patterns extends ast.TreeDSL {
 
     // @pre: is not right-ignoring (no star pattern) ; no exhaustivity check
     override def simplify(pv: PatternVar) = {
-      pv.sym setFlag Flags.TRANS_FLAG
+      pv.sym setFlag NO_EXHAUSTIVE
       this rebindTo elems.foldRight(gen.mkNil)(listFolder)
     }
     override def description = "UnSeq(%s => %s)".format(tptArg, resTypesString)
@@ -474,7 +474,7 @@ trait Patterns extends ast.TreeDSL {
 
     def isSymValid = (sym != null) && (sym != NoSymbol)
     def isModule = sym.isModule || tpe.termSymbol.isModule
-    def isCaseClass = tpe.typeSymbol hasFlag Flags.CASE
+    def isCaseClass = tpe.typeSymbol.isCase
     def isObject = isSymValid && prefix.isStable  // XXX not entire logic
     
     def unadorn(t: Tree): Tree = Pattern unadorn t

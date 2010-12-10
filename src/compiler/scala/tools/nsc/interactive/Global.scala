@@ -26,9 +26,14 @@ self =>
   import definitions._
 
   val debugIDE = false
+  
+  /** Print msg only when debugIDE is true. */
+  @inline final def debugLog(msg: => String) = 
+    if (debugIDE) println(msg)
 
   override def onlyPresentation = true
-
+  override def forInteractive = true
+  
   /** A list indicating in which order some units should be typechecked.
    *  All units in firsts are typechecked before any unit not in this list
    *  Modified by askToDoFirst, reload, typeAtTree.
@@ -141,7 +146,13 @@ self =>
   def pollForWork() {
     scheduler.pollInterrupt() match {
       case Some(ir) =>
-        ir.execute(); pollForWork()
+	try {
+	  activeLocks += 1
+          ir.execute()
+	} finally {
+	  activeLocks -= 1
+	}
+        pollForWork()
       case _ =>
     }
     if (pendingResponse.isCancelled)
@@ -159,11 +170,11 @@ self =>
       case Some(action) =>
         try {
           acting = true
-          if (debugIDE) println("picked up work item: "+action)
+          debugLog("picked up work item: "+action)
           action()
-          if (debugIDE) println("done with work item: "+action)
+          debugLog("done with work item: "+action)
         } finally {
-          if (debugIDE) println("quitting work item: "+action)
+          debugLog("quitting work item: "+action)
           acting = false
         }
       case None =>
@@ -208,7 +219,8 @@ self =>
   // ----------------- The Background Runner Thread -----------------------
 
   /** The current presentation compiler runner */
-  protected var compileRunner = newRunnerThread
+  @volatile protected var compileRunner = newRunnerThread
+  compileRunner.start()
 
   private var threadId = 1
 
@@ -235,6 +247,7 @@ self =>
         case ex => 
           outOfDate = false
           compileRunner = newRunnerThread
+          compileRunner.start()
           ex match {
             case FreshRunReq =>   // This shouldn't be reported
             case _ : ValidateException => // This will have been reported elsewhere
@@ -243,7 +256,6 @@ self =>
       }
     }
     threadId += 1
-    start()
   }
 
   /** Compile all given units
@@ -283,6 +295,7 @@ self =>
     currentTyperRun.compileLate(unit)
     if (!reporter.hasErrors) validatePositions(unit.body)
     //println("parsed: [["+unit.body+"]]")
+    if (!unit.isJava) syncTopLevelSyms(unit)
     unit.status = JustParsed
   }
 
@@ -291,21 +304,22 @@ self =>
   def recompile(units: List[RichCompilationUnit]) {
     for (unit <- units) {
       reset(unit)
-      if (debugIDE) inform("parsing: "+unit)
+      debugLog("parsing: "+unit)
       parse(unit)
     }
     for (unit <- units) {
-      if (debugIDE) inform("type checking: "+unit)
+      debugLog("type checking: "+unit)
       activeLocks = 0
       currentTyperRun.typeCheck(unit)
       unit.status = currentRunId
-      if (!unit.isJava) syncTopLevelSyms(unit)
     }
   }
 
   def syncTopLevelSyms(unit: RichCompilationUnit) {
     val deleted = currentTopLevelSyms filter { sym =>
-      sym.sourceFile == unit.source.file && runId(sym.validTo) < currentRunId 
+      /** We sync after namer phase and it resets all the top-level symbols that survive the new parsing
+       * round to NoPeriod. */
+      sym.sourceFile == unit.source.file && sym.validTo != NoPeriod && runId(sym.validTo) < currentRunId 
     }
     for (d <- deleted) {
       d.owner.info.decls unlink d
@@ -439,7 +453,7 @@ self =>
     val locals = new LinkedHashMap[Name, ScopeMember]
     def addScopeMember(sym: Symbol, pre: Type, viaImport: Tree) =
       if (!sym.name.decode.containsName(Dollar) &&  
-          !sym.hasFlag(Flags.SYNTHETIC) &&
+          !sym.isSynthetic &&
           !locals.contains(sym.name)) {
         locals(sym.name) = new ScopeMember(
           sym, 
@@ -452,9 +466,9 @@ self =>
       for (sym <- cx.scope)
         addScopeMember(sym, NoPrefix, EmptyTree)
       if (cx == cx.enclClass) {
-	val pre = cx.prefix
-	for (sym <- pre.members) 
-	  addScopeMember(sym, pre, EmptyTree)
+        val pre = cx.prefix
+        for (sym <- pre.members) 
+          addScopeMember(sym, pre, EmptyTree)
       }
       cx = cx.outer
     }
@@ -497,7 +511,7 @@ self =>
     if (tree.tpe == null)
       tree = analyzer.newTyper(context).typedQualifier(tree)
       
-    if (debugIDE) println("typeMembers at "+tree+" "+tree.tpe)
+    debugLog("typeMembers at "+tree+" "+tree.tpe)
 
     val superAccess = tree.isInstanceOf[Super]
     val scope = new Scope
@@ -527,14 +541,22 @@ self =>
         case ex: TypeError => EmptyTree
       }
     }
+    
+    /** Names containing $ are not valid completions. */
+    def shouldDisplay(sym: Symbol): Boolean = 
+      !sym.name.toString.contains("$")
 
     val pre = stabilizedType(tree)
-    val ownerTpe = if (tree.tpe != null) tree.tpe else pre
+    val ownerTpe = tree.tpe match {
+      case analyzer.ImportType(expr) => expr.tpe
+      case null => pre
+      case _ => tree.tpe
+    }
 
-    for (sym <- ownerTpe.decls)
+    for (sym <- ownerTpe.decls if shouldDisplay(sym))
       addTypeMember(sym, pre, false, NoSymbol)
     members.values.toList #:: {
-      for (sym <- ownerTpe.members)
+      for (sym <- ownerTpe.members if shouldDisplay(sym))
         addTypeMember(sym, pre, true, NoSymbol)
       members.values.toList #:: {
         val applicableViews: List[SearchResult] = 
@@ -581,16 +603,17 @@ self =>
     def enterNames(unit: CompilationUnit): Unit = {
       applyPhase(namerPhase, unit)
     }
+    
 
     /** Return fully attributed tree at given position
-     *  (i.e. largest tree that's contained by position)
+     *  (i.e. smallest tree containing position)
      */
     def typedTreeAt(pos: Position): Tree = {
-      if (debugIDE) println("starting typedTreeAt")
+      debugLog("starting typedTreeAt")
       val tree = locateTree(pos)
-      if (debugIDE) println("at pos "+pos+" was found: "+tree+tree.pos.show)
+      debugLog("at pos "+pos+" was found: "+tree+tree.pos.show)
       if (stabilizedType(tree) ne null) {
-        if (debugIDE) println("already attributed")
+        debugLog("already attributed")
         tree
       } else {
         val unit = unitOf(pos)

@@ -59,8 +59,6 @@ trait MapLike[A, +B, +This <: MapLike[A, B, This] with Map[A, B]]
      with IterableLike[(A, B), This] 
      with Subtractable[A, This] { 
 self =>
-  // note: can't inherit Addable because of variance problems: Map
-  // is covariant in its value type B, but Addable is nonvariant.
 
   /** The empty map of the same type as this map
    *   @return   an empty map of type `This`.
@@ -305,6 +303,14 @@ self =>
       if (p(kv)) res = (res - kv._1).asInstanceOf[This] // !!! concrete overrides abstract problem
     res
   }
+  
+  /** Overridden for efficiency. */
+  override def toSeq: Seq[(A, B)] = toBuffer[(A, B)]
+  override def toBuffer[C >: (A, B)]: mutable.Buffer[C] = {
+    val result = new mutable.ArrayBuffer[C](size)
+    copyToBuffer(result)
+    result
+  }
 
   /** Appends all bindings of this map to a string builder using start, end, and separator strings.
    *  The written text begins with the string `start` and ends with the string
@@ -347,7 +353,8 @@ self =>
       try {
         this forall { 
           case (k, v) => that.get(k.asInstanceOf[b]) match {
-            case Some(`v`) => true
+            case Some(`v`) =>
+              true
             case _ => false
           }
         }

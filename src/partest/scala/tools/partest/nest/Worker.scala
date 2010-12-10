@@ -109,7 +109,13 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
   var reporter: ConsoleReporter = _
   val timer = new Timer
 
-  def error(msg: String): Unit = reporter.error(
+  val javacCmd = if ((fileManager.JAVAC_CMD.indexOf("${env.JAVA_HOME}") != -1) ||
+                     fileManager.JAVAC_CMD.equals("/bin/javac") ||
+                     fileManager.JAVAC_CMD.equals("\\bin\\javac")) "javac"
+                 else
+                   fileManager.JAVAC_CMD
+
+  def workerError(msg: String): Unit = reporter.error(
     FakePos("scalac"),
     msg + "\n  scalac -help  gives more information"
   )
@@ -221,13 +227,6 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
 
   def javac(outDir: File, files: List[File], output: File): Boolean = {
     // compile using command-line javac compiler
-    val javacCmd = if ((fileManager.JAVAC_CMD.indexOf("${env.JAVA_HOME}") != -1) ||
-                       fileManager.JAVAC_CMD.equals("/bin/javac") ||
-                       fileManager.JAVAC_CMD.equals("\\bin\\javac"))
-      "javac"
-    else
-      fileManager.JAVAC_CMD
-
     val cmd = javacCmd+
       " -d "+outDir.getAbsolutePath+
       " -classpath "+ join(outDir.toString, CLASSPATH) +
@@ -304,6 +303,7 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
       "-Dpartest.lib="+LATEST_LIB,
       "-Dpartest.cwd="+outDir.getParent,
       "-Djavacmd="+JAVACMD,
+      "-Djavaccmd="+javacCmd,
       "-Duser.language=en -Duser.country=US"
     ) ::: (
       if (isPartestDebug) List("-Dpartest.debug=true") else Nil
@@ -349,7 +349,14 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
   def compareOutput(dir: File, fileBase: String, kind: String, logFile: File): String =
     // if check file exists, compare with log file
     getCheckFile(dir, fileBase, kind) match {
-      case Some(f)  => fileManager.compareFiles(logFile, f.jfile)
+      case Some(f)  => 
+        val diff = fileManager.compareFiles(logFile, f.jfile)
+        if (diff != "" && fileManager.updateCheck) {
+          NestUI.verbose("output differs from log file: updating checkfile\n")
+          f.toFile writeAll file2String(logFile)
+          ""
+        }
+        else diff
       case _        => file2String(logFile)
     }    
 
@@ -396,8 +403,7 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
      *     output directory as arguments.
      */
     def runInContext(file: File, kind: String, script: (File, File) => Unit): LogContext = {
-      // when option "--failed" is provided
-      // execute test only if log file is present
+      // When option "--failed" is provided, execute test only if log file is present
       // (which means it failed before)
       val logFile = createLogFile(file, kind)
       if (!fileManager.failed || logFile.canRead) {
@@ -538,8 +544,8 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
           val lines = SFile(logFile).lines.filter(_.trim != "").toBuffer
           succeeded = {
             val failures = lines filter (_ startsWith "!")
-            val passedok = lines filter (_ startsWith "+") forall (_ contains "OK")
-            failures.isEmpty && passedok
+            //val passedok = lines filter (_ startsWith "+") forall (_ contains "OK") - OK may wrap!!
+            failures.isEmpty
           }
           if (!succeeded) {
             NestUI.normal("ScalaCheck test failed. Output:\n")
@@ -612,7 +618,7 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
               val logConsoleWriter = new PrintWriter(logWriter)
 
               // create proper settings for the compiler
-              val settings = new Settings(error)
+              val settings = new Settings(workerError)
               settings.outdir.value = outDir.getCanonicalFile.getAbsolutePath
               settings.sourcepath.value = sourcepath
               settings.classpath.value = fileManager.CLASSPATH
@@ -747,7 +753,7 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
             val logConsoleWriter = new PrintWriter(new OutputStreamWriter(logOut))
 
             // create compiler
-            val settings = new Settings(error)
+            val settings = new Settings(workerError)
             settings.sourcepath.value = sourcepath
             settings.classpath.value = fileManager.CLASSPATH
             reporter = new ConsoleReporter(settings, scala.Console.in, logConsoleWriter)
@@ -761,7 +767,7 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
               NestUI.verbose("compiling "+line)
               val cmdArgs = (line split ' ').toList map (fs => new File(dir, fs).getAbsolutePath)
               NestUI.verbose("cmdArgs: "+cmdArgs)
-              val sett = new Settings(error)
+              val sett = new Settings(workerError)
               sett.sourcepath.value = sourcepath
               val command = new CompilerCommand(cmdArgs, sett)
               (new compiler.Run) compile command.files
@@ -819,8 +825,8 @@ class Worker(val fileManager: FileManager, params: TestRunParams) extends Actor 
             diffCheck(compareOutput(dir, fileBase, kind, logFile))
 
             } catch {
-              case e: Exception =>
-	        e.printStackTrace()
+              case e =>
+                e.printStackTrace()
                 succeeded = false
             }
 

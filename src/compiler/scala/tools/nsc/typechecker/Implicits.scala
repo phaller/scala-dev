@@ -584,7 +584,7 @@ self: Analyzer =>
       def comesBefore(sym: Symbol, owner: Symbol) = {
         val ownerPos = owner.pos.pointOrElse(Integer.MAX_VALUE)
         sym.pos.pointOrElse(0) < ownerPos && (
-          if(sym isGetterOrSetter) {
+          if(sym hasAccessorFlag) {
             val symAcc = sym.accessed // #3373
             symAcc.pos.pointOrElse(0) < ownerPos &&
             !(owner.ownerChain exists (o => (o eq sym) || (o eq symAcc))) // probably faster to iterate only once, don't feel like duplicating hasTransOwner for this case
@@ -747,9 +747,9 @@ self: Analyzer =>
         tp match {
           case TypeRef(pre, sym, args) =>
             if (sym.isClass) {
-              if (!((sym.name == nme.REFINE_CLASS_NAME.toTypeName) ||
-                    (sym.name startsWith nme.ANON_CLASS_NAME) ||
-                    (sym.name == nme.ROOT.toTypeName)))
+              if (!((sym.name == tpnme.REFINE_CLASS_NAME) ||
+                    (sym.name startsWith tpnme.ANON_CLASS_NAME) ||
+                    (sym.name == tpnme.ROOT)))
                 partMap get sym match {
                   case Some(pre1) => 
                     if (!(pre =:= pre1)) partMap(sym) = NoType // ambiguous prefix - ignore implicit members 

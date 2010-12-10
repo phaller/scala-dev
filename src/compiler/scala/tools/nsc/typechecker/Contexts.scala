@@ -48,7 +48,7 @@ trait Contexts { self: Analyzer =>
         assert(ScalaPackage ne null, "Scala package is null")
         imps += ScalaPackage
         if (!(treeInfo.isUnitInScala(unit.body, nme.Predef) ||
-              treeInfo.isUnitInScala(unit.body, nme.ScalaObject) ||
+              treeInfo.isUnitInScala(unit.body, tpnme.ScalaObject) ||
               treeInfo.containsLeadingPredefImport(List(unit.body))))
           imps += PredefModule
       }
@@ -90,10 +90,11 @@ trait Contexts { self: Analyzer =>
       sc = sc.outer
     }
   }
+
   class Context private[typechecker] {
     var unit: CompilationUnit = _
-    var tree: Tree = _ // Tree associated with this context
-    var owner: Symbol = NoSymbol// The current owner
+    var tree: Tree = _                      // Tree associated with this context
+    var owner: Symbol = NoSymbol            // The current owner
     var scope: Scope = _                    // The current scope
     var outer: Context = _                  // The next outer context
     var enclClass: Context = _              // The next outer context whose tree is a
@@ -149,7 +150,7 @@ trait Contexts { self: Analyzer =>
              scope: Scope, imports: List[ImportInfo]): Context = {
       val c = new Context
       c.unit = unit
-      c.tree = /*sanitize*/(tree) // used to be for IDE
+      c.tree = tree
       c.owner = owner
       c.scope = scope
       
@@ -429,12 +430,12 @@ trait Contexts { self: Analyzer =>
         val ab = sym.accessBoundary(sym.owner)
         (  (ab.isTerm || ab == definitions.RootClass)
         || (accessWithin(ab) || accessWithinLinked(ab)) &&
-             (  !sym.hasFlag(LOCAL)
+             (  !sym.hasLocalFlag
              || sym.owner.isImplClass // allow private local accesses to impl classes
-             || (sym hasFlag PROTECTED) && isSubThisType(pre, sym.owner)
+             || sym.isProtected && isSubThisType(pre, sym.owner)
              || pre =:= sym.owner.thisType
              )
-        || (sym hasFlag PROTECTED) &&
+        || sym.isProtected &&
              (  superAccess
              || pre.isInstanceOf[ThisType]
              || sym.isConstructor
@@ -484,7 +485,7 @@ trait Contexts { self: Analyzer =>
      *  with the same names. Local symbols override imported ones. This fixes #2866.
      */
     private def isQualifyingImplicit(sym: Symbol, pre: Type, imported: Boolean) =
-      sym.hasFlag(IMPLICIT) &&
+      sym.isImplicit &&
       isAccessible(sym, pre, false) && 
       !(imported && {
         val e = scope.lookupEntry(sym.name)
@@ -587,9 +588,6 @@ trait Contexts { self: Analyzer =>
       var renamed = false
       var selectors = tree.selectors
       while (selectors != Nil && result == NoSymbol) {
-//        if (selectors.head.name != nme.WILDCARD) // used to be for IDE
-//          notifyImport(name, qual.tpe, selectors.head.name, selectors.head.rename)
-
         if (selectors.head.rename == name.toTermName)
           result = qual.tpe.nonLocalMember( // new to address #2733: consider only non-local members for imports
             if (name.isTypeName) selectors.head.name.toTypeName else selectors.head.name)

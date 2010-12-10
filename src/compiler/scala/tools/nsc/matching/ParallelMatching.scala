@@ -28,7 +28,6 @@ trait ParallelMatching extends ast.TreeDSL
   import CODE._
   import Types._
   import Debug._
-  import Flags.{ TRANS_FLAG }
   import PartialFunction._
 
   /** Transition **/
@@ -110,7 +109,7 @@ trait ParallelMatching extends ast.TreeDSL
       // tests
       def isDefined   = sym ne NoSymbol
       def isSimple    = tpe.isByte || tpe.isShort || tpe.isChar || tpe.isInt
-      def isCaseClass = tpe.typeSymbol hasFlag Flags.CASE
+      def isCaseClass = tpe.typeSymbol.isCase
 
       // sequences
       def seqType         = tpe.widen baseType SeqClass
@@ -124,8 +123,8 @@ trait ParallelMatching extends ast.TreeDSL
         (0 to count).toList map (i => if (i < count) createElemVar(i) else createSeqVar(i))
 
       // for propagating "unchecked" to synthetic vars
-      def isChecked = !(sym hasFlag TRANS_FLAG)
-      def flags: List[Long] = List(TRANS_FLAG) filter (sym hasFlag _)
+      def isChecked = !(sym hasFlag NO_EXHAUSTIVE)
+      def flags: List[Long] = List(NO_EXHAUSTIVE) filter (sym hasFlag _)
       
       // this is probably where this actually belongs
       def createVar(tpe: Type, f: Symbol => Tree) = context.createVar(tpe, f, isChecked)
@@ -544,7 +543,7 @@ trait ParallelMatching extends ast.TreeDSL
         }      
 
       lazy val label =
-        owner.newLabel(scrut.pos, newName("failCont%")) setInfo MethodType(Nil, labelBody.tpe)
+        owner.newLabel(scrut.pos, cunit.freshTermName("failCont%")) setInfo MethodType(Nil, labelBody.tpe)
       
       lazy val cond =
         handleOuter(rhs MEMBER_== scrut.id )
@@ -885,7 +884,6 @@ trait ParallelMatching extends ast.TreeDSL
           case ConstantType(Constant(value))          => scrutTree MEMBER_== Literal(value)
           case SingleType(NoPrefix, sym)              => genEquals(sym)
           case SingleType(pre, sym) if sym.isModule   => genEquals(sym)
-          case ThisType(sym) if sym.isAnonymousClass  => cunit.error(sym.pos, "self type test in anonymous class forbidden by implementation.") ; EmptyTree
           case ThisType(sym) if sym.isModule          => genEquals(sym)
           case _ if isMatchUnlessNull                 => scrutTree OBJ_NE NULL
           case _                                      => scrutTree IS tpe

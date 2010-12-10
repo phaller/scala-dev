@@ -25,7 +25,6 @@ import annotation.unchecked.uncheckedVariance
 trait GenericParTemplate[+A, +CC[X] <: ParIterable[X]]
 extends GenericTraversableTemplate[A, CC]
    with HasNewCombiner[A, CC[A] @uncheckedVariance]
-   with TaskSupport
 {
   def companion: GenericCompanion[CC] with GenericParCompanion[CC]
   
@@ -33,7 +32,6 @@ extends GenericTraversableTemplate[A, CC]
   
   protected[this] override def newCombiner: Combiner[A, CC[A]] = {
     val cb = companion.newCombiner[A]
-    cb.environment = environment
     cb
   }
   
@@ -41,7 +39,6 @@ extends GenericTraversableTemplate[A, CC]
   
   def genericCombiner[B]: Combiner[B, CC[B]] = {
     val cb = companion.newCombiner[B]
-    cb.environment = environment
     cb
   }
   
@@ -49,13 +46,11 @@ extends GenericTraversableTemplate[A, CC]
 
 
 trait GenericParMapTemplate[K, +V, +CC[X, Y] <: ParMap[X, Y]]
-extends TaskSupport
 {
   def mapCompanion: GenericParMapCompanion[CC]
   
   def genericMapCombiner[P, Q]: Combiner[(P, Q), CC[P, Q]] = {
     val cb = mapCompanion.newCombiner[P, Q]
-    cb.environment = environment
     cb
   }
 }

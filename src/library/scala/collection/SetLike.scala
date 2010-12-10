@@ -10,7 +10,8 @@
 package scala.collection
 
 import generic._
-import mutable.{Builder, AddingBuilder}
+import mutable.{ Builder, SetBuilder }
+import scala.annotation.migration
 
 /** A template trait for sets.
  *
@@ -56,7 +57,6 @@ import mutable.{Builder, AddingBuilder}
  */
 trait SetLike[A, +This <: SetLike[A, This] with Set[A]] 
 extends IterableLike[A, This] 
-   with Addable[A, This] 
    with Subtractable[A, This] { 
 self =>
 
@@ -70,7 +70,21 @@ self =>
    *  <a href="mutable/SetLike.html" target="ContentFrame">
    *  `mutable.SetLike`</a>.
    */
-  override protected[this] def newBuilder: Builder[A, This] = new AddingBuilder[A, This](empty)
+  override protected[this] def newBuilder: Builder[A, This] = new SetBuilder[A, This](empty)
+  
+  /** Overridden for efficiency. */
+  override def toSeq: Seq[A] = toBuffer[A]
+  override def toBuffer[A1 >: A]: mutable.Buffer[A1] = {
+    val result = new mutable.ArrayBuffer[A1](size)
+    copyToBuffer(result)
+    result
+  }
+
+  // note: this is only overridden here to add the migration annotation,
+  // which I hope to turn into an Xlint style warning as the migration aspect
+  // is not central to its importance.
+  @migration(2, 8, "Set.map now returns a Set, so it will discard duplicate values.")
+  override def map[B, That](f: A => B)(implicit bf: CanBuildFrom[This, B, That]): That = super.map(f)(bf)
 
   /** Tests if some element is contained in this set.
    *
@@ -87,6 +101,25 @@ self =>
    *          contains `elem`.
    */
   def + (elem: A): This
+  
+  /** Creates a new $coll with additional elements. 
+   *
+   *  This method takes two or more elements to be added. Another overloaded
+   *  variant of this method handles the case where a single element is added.
+   *
+   *  @param elem1 the first element to add.
+   *  @param elem2 the second element to add.
+   *  @param elems the remaining elements to add.
+   *  @return   a new $coll with the given elements added.
+   */
+  def + (elem1: A, elem2: A, elems: A*): This = this + elem1 + elem2 ++ elems
+  
+  /** Creates a new $coll by adding all elements contained in another collection to this $coll.
+   *
+   *  @param elems     the collection containing the added elements.
+   *  @return a new $coll with the given elements added.
+   */
+  def ++ (elems: TraversableOnce[A]): This = newBuilder ++= this ++= elems result
 
   /** Creates a new set with a given element removed from this set.
    *
@@ -182,9 +215,13 @@ self =>
    *           Unless overridden this is simply `"Set"`.
    */
   override def stringPrefix: String = "Set"
-
   override def toString = super[IterableLike].toString
-  override def hashCode() = this map (_.hashCode) sum
+
+  // Careful! Don't write a Set's hashCode like:
+  //    override def hashCode() = this map (_.hashCode) sum
+  // Calling map on a set drops duplicates: any hashcode collisions would
+  // then be dropped before they can be added.
+  override def hashCode() = this.foldLeft(0)(_ + _.hashCode)
   
   /** Compares this set with another object for equality.
    *

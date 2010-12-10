@@ -155,7 +155,7 @@ abstract class LambdaLift extends InfoTransform {
           if (settings.debug.value) log("" + sym + " is free in " + owner);
           if ((sym.isVariable || (sym.isValue && sym.isLazy)) && !sym.hasFlag(CAPTURED)) {
             sym setFlag CAPTURED
-            val symClass = sym.tpe.typeSymbol;
+            val symClass = sym.tpe.typeSymbol
             atPhase(phase.next) {
               sym updateInfo (
                 if (sym.hasAnnotation(VolatileAttr))
@@ -254,8 +254,10 @@ abstract class LambdaLift extends InfoTransform {
             sym.owner.name + "$"
           else ""
         )
-        val fresh = unit.fresh.newName(sym.pos, base)
-        sym.name = if (sym.name.isTypeName) fresh.toTypeName else fresh
+        sym.name = 
+          if (sym.name.isTypeName) unit.freshTypeName(base)
+          else unit.freshTermName(base)
+
         if (settings.debug.value) log("renamed: " + sym.name)
       }
 
@@ -405,13 +407,20 @@ abstract class LambdaLift extends InfoTransform {
         case ValDef(mods, name, tpt, rhs) =>
           if (sym.isCapturedVariable) {
             val tpt1 = TypeTree(sym.tpe) setPos tpt.pos
-            val rhs1 =
-              atPos(rhs.pos) {
-                typer typed {
-                  Apply(Select(New(TypeTree(sym.tpe)), nme.CONSTRUCTOR), List(rhs))
+            /* Creating a constructor argument if one isn't present. */
+            val constructorArg = rhs match {
+              case EmptyTree =>
+                sym.primaryConstructor.info.paramTypes match {
+                  case List(tp) => gen.mkZero(tp)
+                  case _        =>
+                    log("Couldn't determine how to properly construct " + sym)
+                    rhs
                 }
-              }
-            treeCopy.ValDef(tree, mods, name, tpt1, rhs1)
+              case arg => arg
+            }
+            treeCopy.ValDef(tree, mods, name, tpt1, typer.typedPos(rhs.pos) {
+              Apply(Select(New(TypeTree(sym.tpe)), nme.CONSTRUCTOR), List(constructorArg))
+            })
           } else tree
         case Return(Block(stats, value)) =>
           Block(stats, treeCopy.Return(tree, value)) setType tree.tpe setPos tree.pos
@@ -433,7 +442,7 @@ abstract class LambdaLift extends InfoTransform {
               else if (sym.isLocal && !isSameOwnerEnclosure(sym))
                 atPos(tree.pos)(proxyRef(sym))
               else tree
-            else tree;
+            else tree
           if (sym.isCapturedVariable)
             atPos(tree.pos) {
               val tp = tree.tpe
@@ -441,6 +450,12 @@ abstract class LambdaLift extends InfoTransform {
               if (elemTree.tpe.typeSymbol != tp.typeSymbol) gen.mkAttributedCast(elemTree, tp) else elemTree
             }
           else tree1
+        case Block(stats, expr0) =>
+          val (lzyVals, rest) = stats.partition {
+                      case stat@ValDef(_, _, _, _) if stat.symbol.isLazy => true
+                      case _                                             => false
+                  }
+          treeCopy.Block(tree, lzyVals:::rest, expr0)
         case _ =>
           tree
       }

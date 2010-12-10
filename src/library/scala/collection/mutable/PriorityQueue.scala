@@ -15,8 +15,8 @@ import generic._
 import annotation.migration
 
 /** This class implements priority queues using a heap.
- *  To prioritize elements of type T there must be an implicit
- *  Ordering[T] available at creation.
+ *  To prioritize elements of type A there must be an implicit
+ *  Ordering[A] available at creation.
  *  
  *  @tparam A    type of the elements in this priority queue.
  *  @param ord   implicit ordering used to compare the elements of type `A`.
@@ -32,13 +32,14 @@ import annotation.migration
  *  @define mayNotTerminateInf
  *  @define willNotTerminateInf
  */
-@serializable @cloneable
+@cloneable
 class PriorityQueue[A](implicit val ord: Ordering[A]) 
       extends Iterable[A]
       with GenericOrderedTraversableTemplate[A, PriorityQueue]
       with IterableLike[A, PriorityQueue[A]]
       with Growable[A]
       with Builder[A, PriorityQueue[A]]
+      with Serializable
 {
   import ord._
 

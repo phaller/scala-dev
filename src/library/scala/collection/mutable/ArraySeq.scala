@@ -12,6 +12,7 @@ package scala.collection
 package mutable
 
 import generic._
+import parallel.mutable.ParArray
 
 /** A class for polymorphic arrays of elements that's represented
  *  internally by an array of objects. This means that elements of
@@ -38,25 +39,31 @@ import generic._
  *  @define mayNotTerminateInf
  *  @define willNotTerminateInf
  */
+@SerialVersionUID(1530165946227428979L)
 class ArraySeq[A](override val length: Int)
 extends IndexedSeq[A] 
    with GenericTraversableTemplate[A, ArraySeq]
-   with IndexedSeqOptimized[A, ArraySeq[A]] { 
+   with IndexedSeqOptimized[A, ArraySeq[A]]
+   with Parallelizable[ParArray[A]]
+   with Serializable
+{
 
   override def companion: GenericCompanion[ArraySeq] = ArraySeq
 
   val array: Array[AnyRef] = new Array[AnyRef](length)
+  
+  def par = ParArray.handoff(array.asInstanceOf[Array[A]])
 
   def apply(idx: Int): A = {
     if (idx >= length) throw new IndexOutOfBoundsException(idx.toString)
     array(idx).asInstanceOf[A]
   }
-
-  def update(idx: Int, elem: A) { 
+  
+  def update(idx: Int, elem: A) {
     if (idx >= length) throw new IndexOutOfBoundsException(idx.toString)
     array(idx) = elem.asInstanceOf[AnyRef]
   }
-
+  
   override def foreach[U](f: A =>  U) {
     var i = 0
     while (i < length) {
@@ -74,10 +81,15 @@ extends IndexedSeq[A]
    *  @param  start starting index.
    *  @param  len number of elements to copy
    */
-   override def copyToArray[B >: A](xs: Array[B], start: Int, len: Int) {
-     val len1 = len min (xs.length - start) min length
-     Array.copy(array, 0, xs, start, len1)
-   }
+  override def copyToArray[B >: A](xs: Array[B], start: Int, len: Int) {
+    val len1 = len min (xs.length - start) min length
+    Array.copy(array, 0, xs, start, len1)
+  }
+  
+  override def toParIterable = par
+  
+  override def toParSeq = par
+  
 }
 
 /** $factoryInfo

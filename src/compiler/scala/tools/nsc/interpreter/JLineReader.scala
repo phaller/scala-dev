@@ -13,8 +13,14 @@ import jline.{ ConsoleReader, ArgumentCompletor, History => JHistory }
 class JLineReader(interpreter: Interpreter) extends InteractiveReader {
   def this() = this(null)
   
-  override lazy val history = Some(History(consoleReader))
+  override lazy val history    = Some(History(consoleReader))
   override lazy val completion = Option(interpreter) map (x => new Completion(x))
+  override def init()          = consoleReader.getTerminal().initializeTerminal()
+  override def redrawLine()    = {
+    consoleReader.flushConsole()
+    consoleReader.drawLine()
+    consoleReader.flushConsole()
+  }
   
   val consoleReader = {
     val r = new jline.ConsoleReader()
@@ -28,6 +34,7 @@ class JLineReader(interpreter: Interpreter) extends InteractiveReader {
     r
   }
   
+  override def currentLine: String = consoleReader.getCursorBuffer.getBuffer.toString
   def readOneLine(prompt: String) = consoleReader readLine prompt
   val interactive = true
 }

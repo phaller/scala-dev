@@ -15,11 +15,13 @@ import generic._
 /** This class implements mutable sets using a hashtable.
  *  The iterator and all traversal methods of this class visit elements in the order they were inserted.
  *
+ *  $cannotStoreNull
+ *
  *  @author  Matthias Zenger
  *  @author  Martin Odersky
  *  @version 2.0, 31/12/2006
  *  @since   1
- *  
+ *
  *  @tparam A     the type of the elements contained in this set.
  *  
  *  @define Coll LinkedHashSet
@@ -36,11 +38,12 @@ import generic._
  *  @define orderDependent
  *  @define orderDependentFold
  */
-@serializable @SerialVersionUID(1L)
+@SerialVersionUID(1L)
 class LinkedHashSet[A] extends Set[A] 
                           with GenericSetTemplate[A, LinkedHashSet]
                           with SetLike[A, LinkedHashSet[A]] 
-                          with FlatHashTable[A] 
+                          with FlatHashTable[A]
+                          with Serializable
 {
   override def companion: GenericCompanion[LinkedHashSet] = LinkedHashSet
 

@@ -12,15 +12,19 @@ package scala.collection
 package mutable
 
 import generic._
+import collection.parallel.mutable.ParHashSet
 
 /** This class implements mutable sets using a hashtable.
  *
+ *  $cannotStoreNull
+ *  
  *  @author  Matthias Zenger
  *  @author  Martin Odersky
  *  @version 2.0, 31/12/2006
  *  @since   1
  *  
  *  @tparam A     the type of the elements contained in this set.
+ *
  *  
  *  @define Coll mutable.HashSet
  *  @define coll mutable hash set
@@ -34,11 +38,19 @@ import generic._
  *  @define mayNotTerminateInf
  *  @define willNotTerminateInf
  */
-@serializable @SerialVersionUID(1L)
-class HashSet[A] extends Set[A] 
-                    with GenericSetTemplate[A, HashSet]
-                    with SetLike[A, HashSet[A]] 
-                    with FlatHashTable[A] {
+@SerialVersionUID(1L)
+class HashSet[A] private[collection] (contents: FlatHashTable.Contents[A])
+extends Set[A] 
+   with GenericSetTemplate[A, HashSet]
+   with SetLike[A, HashSet[A]] 
+   with FlatHashTable[A]
+   with Parallelizable[ParHashSet[A]]
+   with Serializable
+{
+  initWithContents(contents)
+  
+  def this() = this(null)
+  
   override def companion: GenericCompanion[HashSet] = HashSet
 
   override def size = tableSize
@@ -47,12 +59,14 @@ class HashSet[A] extends Set[A]
 
   def += (elem: A): this.type = { addEntry(elem); this }
   def -= (elem: A): this.type = { removeEntry(elem); this }
-
+  
+  def par = new ParHashSet(hashTableContents)
+  
   override def add(elem: A): Boolean = addEntry(elem)
   override def remove(elem: A): Boolean = removeEntry(elem).isDefined
 
   override def clear() = clearTable()
- 
+  
   override def foreach[U](f: A =>  U) {
     var i = 0
     val len = table.length
@@ -72,6 +86,17 @@ class HashSet[A] extends Set[A]
   private def readObject(in: java.io.ObjectInputStream) {
     init(in, x => x)
   }
+  
+  /** Toggles whether a size map is used to track hash map statistics.
+   */
+  def useSizeMap(t: Boolean) = if (t) {
+    if (!isSizeMapDefined) sizeMapInitAndRebuild
+  } else sizeMapDisable
+  
+  override def toParIterable = par
+  
+  override def toParSet[B >: A] = par.asInstanceOf[ParHashSet[B]]
+  
 }
 
 /** $factoryInfo

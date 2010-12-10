@@ -28,7 +28,7 @@ trait MatrixAdditions extends ast.TreeDSL
   private[matching] trait Squeezer {
     self: MatrixContext =>
     
-    private val settings_squeeze = settings.Xsqueeze.value == "on"
+    private val settings_squeeze = !settings.Ynosqueeze.value
     
     def squeezedBlockPVs(pvs: List[PatternVar], exp: Tree): Tree =
       squeezedBlock(pvs map (_.valDef), exp)
@@ -126,19 +126,8 @@ trait MatrixAdditions extends ast.TreeDSL
               case t => t
           })
         }
-      }
-      object resetTraverser extends Traverser {
-        import Flags._
-        def reset(vd: ValDef) =
-          if (vd.symbol hasFlag SYNTHETIC) vd.symbol resetFlag (TRANS_FLAG|MUTABLE)
-          
-        override def traverse(x: Tree): Unit = x match {
-          case vd: ValDef => reset(vd)
-          case _          => super.traverse(x)
-        }
-      }
-
-      returning(lxtt transform tree)(resetTraverser traverse _)
+      }      
+      returning(lxtt transform tree)(_ => clearSyntheticSyms())
     }
   }
   
@@ -155,7 +144,7 @@ trait MatrixAdditions extends ast.TreeDSL
     class ExhaustivenessChecker(rep: Rep) {
       val Rep(tvars, rows) = rep
 
-      import Flags.{ MUTABLE, ABSTRACT, SEALED, TRANS_FLAG }
+      import Flags.{ MUTABLE, ABSTRACT, SEALED }
 
       private case class Combo(index: Int, sym: Symbol) {
         val isBaseClass = sym.tpe.baseClasses.toSet
@@ -177,7 +166,7 @@ trait MatrixAdditions extends ast.TreeDSL
 
       private def requiresExhaustive(sym: Symbol) = {
          (sym.isMutable) &&                 // indicates that have not yet checked exhaustivity
-        !(sym hasFlag TRANS_FLAG) &&        // indicates @unchecked
+        !(sym hasFlag NO_EXHAUSTIVE) &&        // indicates @unchecked
          (sym.tpe.typeSymbol.isSealed) &&
         !isValueClass(sym.tpe.typeSymbol)   // make sure it's not a primitive, else (5: Byte) match { case 5 => ... } sees no Byte
       }

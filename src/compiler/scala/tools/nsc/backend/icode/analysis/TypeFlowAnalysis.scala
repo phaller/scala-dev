@@ -16,7 +16,7 @@ import scala.collection.{mutable, immutable}
 abstract class TypeFlowAnalysis {
   val global: Global
   import global._
-  import definitions.{ ObjectClass, NothingClass, AnyRefClass, StringClass }
+  import definitions.{ ObjectClass, NothingClass, AnyRefClass, StringClass, ThrowableClass }
 
   /** The lattice of ICode types.
    */
@@ -39,14 +39,14 @@ abstract class TypeFlowAnalysis {
     import icodes._
     type Elem = TypeStack
 
-    val top    = new TypeStack
-    val bottom = new TypeStack
-    val exceptionHandlerStack: TypeStack = new TypeStack(List(REFERENCE(AnyRefClass)))
+    val top                   = new TypeStack
+    val bottom                = new TypeStack
+    val exceptionHandlerStack = new TypeStack(List(REFERENCE(AnyRefClass)))
 
     def lub2(exceptional: Boolean)(s1: TypeStack, s2: TypeStack) = {
       if (s1 eq bottom) s2
       else if (s2 eq bottom) s1
-      else if ((s1 eq exceptionHandlerStack) || (s2 eq exceptionHandlerStack)) Predef.error("merging with exhan stack") 
+      else if ((s1 eq exceptionHandlerStack) || (s2 eq exceptionHandlerStack)) system.error("merging with exhan stack") 
       else {
 //        if (s1.length != s2.length)
 //          throw new CheckerException("Incompatible stacks: " + s1 + " and " + s2);
@@ -144,9 +144,12 @@ abstract class TypeFlowAnalysis {
 */        }
           out(b) = typeFlowLattice.bottom
         }
-        m.exh map (_.startBlock) filterNot (in contains _) foreach { start =>
-          worklist += start
-          in(start) = lattice.IState(in(start).vars, typeStackLattice.exceptionHandlerStack)
+        for (handler <- m.exh) {
+          val start = handler.startBlock
+          if (!in.contains(start)) {
+            worklist += start
+            in(start) = lattice.IState(in(start).vars, typeStackLattice.exceptionHandlerStack)
+          }
         }
       }
     }
@@ -351,7 +354,7 @@ abstract class TypeFlowAnalysis {
         case SCOPE_ENTER(_) | SCOPE_EXIT(_) =>
           ()
 
-        case LOAD_EXCEPTION() =>
+        case LOAD_EXCEPTION(_) =>
           stack.pop(stack.length)
           stack.push(typeLattice.Object)
           
@@ -517,7 +520,7 @@ abstract class TypeFlowAnalysis {
           if (kind != UNIT)
             stack.pop;
 
-        case THROW() =>
+        case THROW(_) =>
           stack.pop
 
         case DROP(kind) =>
@@ -535,7 +538,7 @@ abstract class TypeFlowAnalysis {
         case SCOPE_ENTER(_) | SCOPE_EXIT(_) =>
           ()
 
-        case LOAD_EXCEPTION() =>
+        case LOAD_EXCEPTION(_) =>
           stack.pop(stack.length)
           stack.push(typeLattice.top)
           

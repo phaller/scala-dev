@@ -35,8 +35,8 @@ import parallel.immutable.ParHashMap
  *  @define mayNotTerminateInf
  *  @define willNotTerminateInf
  */
-@serializable @SerialVersionUID(2L)
-class HashMap[A, +B] extends Map[A,B] with MapLike[A, B, HashMap[A, B]] with Parallelizable[ParHashMap[A, B]] {
+@SerialVersionUID(2L)
+class HashMap[A, +B] extends Map[A,B] with MapLike[A, B, HashMap[A, B]] with Parallelizable[ParHashMap[A, B]] with Serializable {
 
   override def size: Int = 0
 
@@ -71,13 +71,13 @@ class HashMap[A, +B] extends Map[A,B] with MapLike[A, B, HashMap[A, B]] with Par
     h ^ (h >>> 10)
   }
   
-  protected def computeHash(key: A) = improve(elemHashCode(key))
+  private[collection] def computeHash(key: A) = improve(elemHashCode(key))
   
   protected type Merger[B1] = ((A, B1), (A, B1)) => (A, B1)
 
   protected def get0(key: A, hash: Int, level: Int): Option[B] = None
 
-  def updated0[B1 >: B](key: A, hash: Int, level: Int, value: B1, kv: (A, B1), merger: Merger[B1]): HashMap[A, B1] = 
+  private[collection] def updated0[B1 >: B](key: A, hash: Int, level: Int, value: B1, kv: (A, B1), merger: Merger[B1]): HashMap[A, B1] = 
     new HashMap.HashMap1(key, hash, value, kv)
 
   protected def removed0(key: A, hash: Int, level: Int): HashMap[A, B] = this
@@ -91,6 +91,11 @@ class HashMap[A, +B] extends Map[A,B] with MapLike[A, B, HashMap[A, B]] with Par
   protected def merge0[B1 >: B](that: HashMap[A, B1], level: Int, merger: Merger[B1]): HashMap[A, B1] = that
   
   def par = ParHashMap.fromTrie(this)
+  
+  override def toParIterable = par
+  
+  private type C = (A, B)
+  override def toParMap[D, E](implicit ev: C <:< (D, E)) = par.asInstanceOf[ParHashMap[D, E]]
   
 }
 
@@ -114,7 +119,11 @@ object HashMap extends ImmutableMapFactory[HashMap] {
   
   class HashMap1[A,+B](private[HashMap] var key: A, private[HashMap] var hash: Int, private[HashMap] var value: (B @uncheckedVariance), private[HashMap] var kv: (A,B @uncheckedVariance)) extends HashMap[A,B] {
     override def size = 1
-
+    
+    private[collection] def getKey = key
+    private[collection] def getHash = hash
+    private[collection] def computeHashFor(k: A) = computeHash(k)
+    
     override def get0(key: A, hash: Int, level: Int): Option[B] = 
       if (hash == this.hash && key == this.key) Some(value) else None
 
@@ -458,20 +467,31 @@ time { mNew.iterator.foreach( p => ()) }
         new HashTrieMap[A, B1](this.bitmap | that.bitmap, merged, totalelems)
       case hm: HashMapCollision1[_, _] => that.merge0(this, level, merger)
       case hm: HashMap[_, _] => this
-      case _ => error("section supposed to be unreachable.")
+      case _ => system.error("section supposed to be unreachable.")
     }
     
   }
   
   class TrieIterator[A, +B](elems: Array[HashMap[A, B]]) extends Iterator[(A, B)] {
-    private[this] var depth = 0
-    private[this] var arrayStack = new Array[Array[HashMap[A,B]]](6)
-    private[this] var posStack = new Array[Int](6)
+    protected var depth = 0
+    protected var arrayStack: Array[Array[HashMap[A, B @uncheckedVariance]]] = new Array[Array[HashMap[A,B]]](6)
+    protected var posStack = new Array[Int](6)
     
-    private[this] var arrayD = elems
-    private[this] var posD = 0
+    protected var arrayD: Array[HashMap[A, B  @uncheckedVariance]] = elems
+    protected var posD = 0
     
-    private[this] var subIter: Iterator[(A, B)] = null // to traverse collision nodes
+    protected var subIter: Iterator[(A, B @uncheckedVariance)] = null // to traverse collision nodes
+    
+    def dupIterator: TrieIterator[A, B] = {
+      val t = new TrieIterator(elems)
+      t.depth = depth
+      t.arrayStack = arrayStack
+      t.posStack = posStack
+      t.arrayD = arrayD
+      t.posD = posD
+      t.subIter = subIter
+      t
+    }
     
     def hasNext = (subIter ne null) || depth >= 0
     
@@ -520,11 +540,23 @@ time { mNew.iterator.foreach( p => ()) }
     // splits this iterator into 2 iterators
     // returns the 1st iterator, its number of elements, and the second iterator
     def split: ((Iterator[(A, B)], Int), Iterator[(A, B)]) = {
+      def collisionToArray(c: HashMapCollision1[_, _]) =
+        c.asInstanceOf[HashMapCollision1[A, B]].kvs.toArray map { HashMap() + _ }
+      def arrayToIterators(arr: Array[HashMap[A, B]]) = {
+        val (fst, snd) = arr.splitAt(arr.length / 2)
+        val szsnd = snd.foldLeft(0)(_ + _.size)
+        ((new TrieIterator(snd), szsnd), new TrieIterator(fst))
+      }
+      def splitArray(ad: Array[HashMap[A, B]]): ((Iterator[(A, B)], Int), Iterator[(A, B)]) = if (ad.length > 1) {
+        arrayToIterators(ad)
+      } else ad(0) match {
+        case c: HashMapCollision1[a, b] => arrayToIterators(collisionToArray(c.asInstanceOf[HashMapCollision1[A, B]]))
+        case hm: HashTrieMap[a, b] => splitArray(hm.elems.asInstanceOf[Array[HashMap[A, B]]])
+      }
+      
       // 0) simple case: no elements have been iterated - simply divide arrayD
       if (arrayD != null && depth == 0 && posD == 0) {
-        val (fst, snd) = arrayD.splitAt(arrayD.length / 2)
-        val szfst = fst.foldLeft(0)(_ + _.size)
-        return ((new TrieIterator(fst), szfst), new TrieIterator(snd))
+        return splitArray(arrayD)
       }
       
       // otherwise, some elements have been iterated over
@@ -563,13 +595,11 @@ time { mNew.iterator.foreach( p => ()) }
           if (posD == arrayD.length - 1) {
             // 3a) positioned at the last element of arrayD
             val arr: Array[HashMap[A, B]] = arrayD(posD) match {
-              case c: HashMapCollision1[_, _] => c.asInstanceOf[HashMapCollision1[A, B]].kvs.toArray map { HashMap() + _ }
+              case c: HashMapCollision1[a, b] => collisionToArray(c).asInstanceOf[Array[HashMap[A, B]]]
               case ht: HashTrieMap[_, _] => ht.asInstanceOf[HashTrieMap[A, B]].elems
-              case _ => error("cannot divide single element")
+              case _ => system.error("cannot divide single element")
             }
-            val (fst, snd) = arr.splitAt(arr.length / 2)
-            val szsnd = snd.foldLeft(0)(_ + _.size)
-            ((new TrieIterator(snd), szsnd), new TrieIterator(fst))
+            arrayToIterators(arr)
           } else {
             // 3b) arrayD has more free elements
             val (fst, snd) = arrayD.splitAt(arrayD.length - (arrayD.length - posD + 1) / 2)
@@ -601,7 +631,7 @@ time { mNew.iterator.foreach( p => ()) }
     } else true
   }
   
-  @serializable  @SerialVersionUID(2L) private class SerializationProxy[A,B](@transient private var orig: HashMap[A, B]) {
+  @SerialVersionUID(2L) private class SerializationProxy[A,B](@transient private var orig: HashMap[A, B]) extends Serializable {
     private def writeObject(out: java.io.ObjectOutputStream) {
       val s = orig.size
       out.writeInt(s)

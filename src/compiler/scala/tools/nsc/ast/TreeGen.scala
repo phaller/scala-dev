@@ -22,10 +22,11 @@ abstract class TreeGen {
   def rootId(name: Name)          = Select(Ident(nme.ROOTPKG), name)
   def rootScalaDot(name: Name)    = Select(rootId(nme.scala_) setSymbol ScalaPackage, name)
   def scalaDot(name: Name)        = Select(Ident(nme.scala_) setSymbol ScalaPackage, name)
-  def scalaAnyRefConstr           = scalaDot(nme.AnyRef.toTypeName)
-  def scalaUnitConstr             = scalaDot(nme.Unit.toTypeName)
-  def scalaScalaObjectConstr      = scalaDot(nme.ScalaObject.toTypeName)
-  def productConstr               = scalaDot(nme.Product.toTypeName)
+  def scalaAnyRefConstr           = scalaDot(tpnme.AnyRef)
+  def scalaUnitConstr             = scalaDot(tpnme.Unit)
+  def scalaScalaObjectConstr      = scalaDot(tpnme.ScalaObject)
+  def productConstr               = scalaDot(tpnme.Product)
+  def serializableConstr          = scalaDot(tpnme.Serializable)
   
   private def isRootOrEmptyPackageClass(s: Symbol) = s.isRoot || s.isEmptyPackageClass
   
@@ -127,8 +128,8 @@ abstract class TreeGen {
   def stableTypeFor(tree: Tree): Option[Type] = tree match {
     case Ident(_) if tree.symbol.isStable =>
       Some(singleType(tree.symbol.owner.thisType, tree.symbol))
-    case Select(qual, _) if   {assert((tree.symbol ne null) && (qual.tpe ne null)); 
-                            tree.symbol.isStable && qual.tpe.isStable} =>
+    case Select(qual, _) if ((tree.symbol ne null) && (qual.tpe ne null)) && // turned assert into guard for #4064
+                            tree.symbol.isStable && qual.tpe.isStable =>
       Some(singleType(qual.tpe, tree.symbol))
     case _ =>
       None
@@ -229,6 +230,22 @@ abstract class TreeGen {
 
   /** Builds a list with given head and tail. */
   def mkNil: Tree = mkAttributedRef(NilModule)
+  
+  /** Builds a tree representing an undefined local, as in
+   *    var x: T = _
+   *  which is appropriate to the given Type.
+   */
+  def mkZero(tp: Type): Tree = {
+    val sym = tp.typeSymbol
+    val tree =
+      if (sym == UnitClass) Literal(())
+      else if (sym == BooleanClass) Literal(false)
+      else if (isValueClass(sym)) Literal(0)
+      else if (NullClass.tpe <:< tp) Literal(null: Any)
+      else abort("Cannot determine zero for " + tp)
+    
+    tree setType tp
+  }
 
   /** Builds a tuple */
   def mkTuple(elems: List[Tree]): Tree =
@@ -277,10 +294,8 @@ abstract class TreeGen {
   def mkCachedModuleAccessDef(accessor: Symbol, mvar: Symbol) =
     DefDef(accessor, mkCached(mvar, newModule(accessor, mvar.tpe)))
 
-  // def m: T = new tpe(...)
-  // where (...) are eventual outer accessors
-  def mkModuleAccessDef(accessor: Symbol, tpe: Type) =
-    DefDef(accessor, newModule(accessor, tpe))
+  def mkModuleAccessDef(accessor: Symbol, msym: Symbol) =
+    DefDef(accessor, Select(This(msym.owner), msym))
 
   def newModule(accessor: Symbol, tpe: Type) =
     New(TypeTree(tpe), 
@@ -302,7 +317,7 @@ abstract class TreeGen {
     Apply(Select(monitor, Object_synchronized), List(body))
 
   def wildcardStar(tree: Tree) =
-    atPos(tree.pos) { Typed(tree, Ident(nme.WILDCARD_STAR.toTypeName)) }
+    atPos(tree.pos) { Typed(tree, Ident(tpnme.WILDCARD_STAR)) }
 
   def paramToArg(vparam: Symbol) = {
     val arg = Ident(vparam)
@@ -345,16 +360,20 @@ abstract class TreeGen {
       mkCast(mkRuntimeCall("toObjectArray", List(tree)), pt)
     else
       mkCast(tree, pt)
+  
+  /** Translate names in Select/Ident nodes to type names.
+   */
+  def convertToTypeName(tree: Tree): Option[RefTree] = tree match {
+    case Select(qual, name) => Some(Select(qual, name.toTypeName))
+    case Ident(name)        => Some(Ident(name.toTypeName))
+    case _                  => None
+  }
 
   /** Try to convert Select(qual, name) to a SelectFromTypeTree.
    */
-  def convertToSelectFromType(qual: Tree, name: Name): Tree = {
-    def selFromType(qual1: Tree) = SelectFromTypeTree(qual1 setPos qual.pos, name)
-    qual match {
-      case Select(qual1, name) => selFromType(Select(qual1, name.toTypeName))
-      case Ident(name) => selFromType(Ident(name.toTypeName))
-      case _ => EmptyTree
-    }
+  def convertToSelectFromType(qual: Tree, origName: Name) = convertToTypeName(qual) match {
+    case Some(qual1)  => SelectFromTypeTree(qual1 setPos qual.pos, origName)
+    case _            => EmptyTree
   }
 
   /** Used in situations where you need to access value of an expression several times
@@ -364,7 +383,7 @@ abstract class TreeGen {
     if (treeInfo.isPureExpr(expr)) {
       within(() => if (used) expr.duplicate else { used = true; expr })
     } else {
-      val temp = owner.newValue(expr.pos.makeTransparent, unit.fresh.newName(expr.pos, "ev$"))
+      val temp = owner.newValue(expr.pos.makeTransparent, unit.freshTermName("ev$"))
         .setFlag(SYNTHETIC).setInfo(expr.tpe)
       val containing = within(() => Ident(temp) setPos temp.pos.focus setType expr.tpe)
       ensureNonOverlapping(containing, List(expr))
@@ -384,7 +403,7 @@ abstract class TreeGen {
           () => if (used(idx)) expr.duplicate else { used(idx) = true; expr }
         }
       } else {
-        val temp = owner.newValue(expr.pos.makeTransparent, unit.fresh.newName(expr.pos, "ev$"))
+        val temp = owner.newValue(expr.pos.makeTransparent, unit.freshTermName("ev$"))
           .setFlag(SYNTHETIC).setInfo(expr.tpe)
         vdefs += ValDef(temp, expr)
         exprs1 += (() => Ident(temp) setPos temp.pos.focus setType expr.tpe)

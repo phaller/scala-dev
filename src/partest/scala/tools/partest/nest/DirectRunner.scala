@@ -18,9 +18,7 @@ import scala.tools.nsc.io.Directory
 import scala.actors.Actor._
 import scala.actors.TIMEOUT
 
-
 case class TestRunParams(val scalaCheckParentClassLoader: ScalaClassLoader)
-
 
 trait DirectRunner {
 
@@ -28,15 +26,19 @@ trait DirectRunner {
   
   import PartestDefaults.numActors
 
-  if (isPartestDebug)
-    scala.actors.Debug.level = 3
-  
-  if (PartestDefaults.poolSize.isEmpty) {
-    scala.actors.Debug.info("actors.corePoolSize not defined")
-    setProp("actors.corePoolSize", "16")
+  def setProperties() {
+    if (isPartestDebug)
+      scala.actors.Debug.level = 3
+
+    if (PartestDefaults.poolSize.isEmpty) {
+      scala.actors.Debug.info("actors.corePoolSize not defined")
+      setProp("actors.corePoolSize", "16")
+    }
   }
-  
-  def runTestsForFiles(kindFiles: List[File], kind: String): scala.collection.immutable.Map[String, Int] = {    
+
+  def runTestsForFiles(_kindFiles: List[File], kind: String): scala.collection.immutable.Map[String, Int] = {
+    /** NO DUPLICATES, or partest will blow the count and hang forever. **/
+    val kindFiles = _kindFiles.distinct
     val len = kindFiles.length
     val (testsEach, lastFrag) = (len/numActors, len%numActors)
     val last = numActors-1

@@ -30,11 +30,12 @@ import collection.parallel.immutable.ParHashSet
  *  @define Coll immutable.HashSet
  *  @define coll immutable hash set
  */
-@serializable @SerialVersionUID(2L)
+@SerialVersionUID(2L)
 class HashSet[A] extends Set[A] 
                     with GenericSetTemplate[A, HashSet]
                     with SetLike[A, HashSet[A]] 
                     with Parallelizable[ParHashSet[A]]
+                    with Serializable
 {
   override def companion: GenericCompanion[HashSet] = HashSet
 
@@ -70,7 +71,7 @@ class HashSet[A] extends Set[A]
     h ^ (h >>> 10)
   }
   
-  protected def computeHash(key: A) = improve(elemHashCode(key))
+  private[collection] def computeHash(key: A) = improve(elemHashCode(key))
 
   protected def get0(key: A, hash: Int, level: Int): Boolean = false
 
@@ -80,6 +81,11 @@ class HashSet[A] extends Set[A]
   protected def removed0(key: A, hash: Int, level: Int): HashSet[A] = this
   
   protected def writeReplace(): AnyRef = new HashSet.SerializationProxy(this)
+  
+  override def toParIterable = par
+  
+  override def toParSet[B >: A] = par.asInstanceOf[ParHashSet[B]]
+  
 }
 
 /** $factoryInfo
@@ -162,12 +168,12 @@ object HashSet extends ImmutableSetFactory[HashSet] {
       // hash codes and remove the collision. however this is never called
       // because no references to this class are ever handed out to client code
       // and HashTrieSet serialization takes care of the situation
-      error("cannot serialize an immutable.HashSet where all items have the same 32-bit hash code")
+      system.error("cannot serialize an immutable.HashSet where all items have the same 32-bit hash code")
       //out.writeObject(kvs)
     }
 
     private def readObject(in: java.io.ObjectInputStream) {
-      error("cannot deserialize an immutable.HashSet where all items have the same 32-bit hash code")
+      system.error("cannot deserialize an immutable.HashSet where all items have the same 32-bit hash code")
       //kvs = in.readObject().asInstanceOf[ListSet[A]]
       //hash = computeHash(kvs.)
     }
@@ -279,14 +285,25 @@ time { mNew.iterator.foreach( p => ()) }
   
   
   class TrieIterator[A](elems: Array[HashSet[A]]) extends Iterator[A] {
-    private[this] var depth = 0
-    private[this] var arrayStack = new Array[Array[HashSet[A]]](6)
-    private[this] var posStack = new Array[Int](6)
+    protected var depth = 0
+    protected var arrayStack = new Array[Array[HashSet[A]]](6)
+    protected var posStack = new Array[Int](6)
     
-    private[this] var arrayD = elems
-    private[this] var posD = 0
+    protected var arrayD = elems
+    protected var posD = 0
     
-    private[this] var subIter: Iterator[A] = null // to traverse collision nodes
+    protected var subIter: Iterator[A] = null // to traverse collision nodes
+    
+    def dupIterator: TrieIterator[A] = {
+      val t = new TrieIterator(elems)
+      t.depth = depth
+      t.arrayStack = arrayStack
+      t.posStack = posStack
+      t.arrayD = arrayD
+      t.posD = posD
+      t.subIter = subIter
+      t
+    }
     
     def hasNext = (subIter ne null) || depth >= 0
     
@@ -301,7 +318,7 @@ time { mNew.iterator.foreach( p => ()) }
     }
     
     @scala.annotation.tailrec private[this] def next0(elems: Array[HashSet[A]], i: Int): A = {
-      if (i == elems.length-1) { // reached end of level, pop stack
+      if (i == elems.length - 1) { // reached end of level, pop stack
         depth -= 1
         if (depth >= 0) {
           arrayD = arrayStack(depth)
@@ -327,7 +344,7 @@ time { mNew.iterator.foreach( p => ()) }
         case m: HashSet1[A] => m.key
         case m =>
           subIter = m.iterator
-          subIter.next
+          next
       }
     }
     
@@ -335,11 +352,23 @@ time { mNew.iterator.foreach( p => ()) }
     // splits this iterator into 2 iterators
     // returns the 1st iterator, its number of elements, and the second iterator
     def split: ((Iterator[A], Int), Iterator[A]) = {
+      def collisionToArray(c: HashSetCollision1[_]) =
+        c.asInstanceOf[HashSetCollision1[A]].ks.toList map { HashSet() + _ } toArray
+      def arrayToIterators(arr: Array[HashSet[A]]) = {
+        val (fst, snd) = arr.splitAt(arr.length / 2)
+        val szsnd = snd.foldLeft(0)(_ + _.size)
+        ((new TrieIterator(snd), szsnd), new TrieIterator(fst))
+      }
+      def splitArray(ad: Array[HashSet[A]]): ((Iterator[A], Int), Iterator[A]) = if (ad.length > 1) {
+        arrayToIterators(ad)
+      } else ad(0) match {
+        case c: HashSetCollision1[a] => arrayToIterators(collisionToArray(c.asInstanceOf[HashSetCollision1[A]]))
+        case hm: HashTrieSet[a] => splitArray(hm.elems.asInstanceOf[Array[HashSet[A]]])
+      }
+      
       // 0) simple case: no elements have been iterated - simply divide arrayD
       if (arrayD != null && depth == 0 && posD == 0) {
-        val (fst, snd) = arrayD.splitAt(arrayD.length / 2)
-        val szfst = fst.foldLeft(0)(_ + _.size)
-        return ((new TrieIterator(fst), szfst), new TrieIterator(snd))
+        return splitArray(arrayD)
       }
       
       // otherwise, some elements have been iterated over
@@ -378,13 +407,11 @@ time { mNew.iterator.foreach( p => ()) }
           if (posD == arrayD.length - 1) {
             // 3a) positioned at the last element of arrayD
             val arr: Array[HashSet[A]] = arrayD(posD) match {
-              case c: HashSetCollision1[_] => c.asInstanceOf[HashSetCollision1[A]].ks.toList map { HashSet() + _ } toArray
+              case c: HashSetCollision1[a] => collisionToArray(c).asInstanceOf[Array[HashSet[A]]]
               case ht: HashTrieSet[_] => ht.asInstanceOf[HashTrieSet[A]].elems
-              case _ => error("cannot divide single element")
+              case _ => system.error("cannot divide single element")
             }
-            val (fst, snd) = arr.splitAt(arr.length / 2)
-            val szsnd = snd.foldLeft(0)(_ + _.size)
-            ((new TrieIterator(snd), szsnd), new TrieIterator(fst))
+            arrayToIterators(arr)
           } else {
             // 3b) arrayD has more free elements
             val (fst, snd) = arrayD.splitAt(arrayD.length - (arrayD.length - posD + 1) / 2)
@@ -397,7 +424,7 @@ time { mNew.iterator.foreach( p => ()) }
     }
   }
   
-  @serializable  @SerialVersionUID(2L) private class SerializationProxy[A,B](@transient private var orig: HashSet[A]) {
+  @SerialVersionUID(2L) private class SerializationProxy[A,B](@transient private var orig: HashSet[A]) extends Serializable {
     private def writeObject(out: java.io.ObjectOutputStream) {
       val s = orig.size
       out.writeInt(s)

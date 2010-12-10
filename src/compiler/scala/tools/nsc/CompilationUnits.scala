@@ -17,6 +17,9 @@ trait CompilationUnits { self: Global =>
 
     /** the fresh name creator */
     var fresh: FreshNameCreator = new FreshNameCreator.Default
+    
+    def freshTermName(prefix: String): TermName = newTermName(fresh.newName(prefix))
+    def freshTypeName(prefix: String): TypeName = newTypeName(fresh.newName(prefix))
 
     /** the content of the compilation unit in tree form */
     var body: Tree = EmptyTree
@@ -76,12 +79,12 @@ trait CompilationUnits { self: Global =>
       reporter.warning(pos, msg)
 
     def deprecationWarning(pos: Position, msg: String) = 
-      if (settings.deprecation.value) warning(pos, msg)
-      else currentRun.deprecationWarnings = true
+      if (opt.deprecation) warning(pos, msg)
+      else currentRun.deprecationWarnings += 1
 
     def uncheckedWarning(pos: Position, msg: String) = 
-      if (settings.unchecked.value) warning(pos, msg)
-      else currentRun.uncheckedWarnings = true
+      if (opt.unchecked) warning(pos, msg)
+      else currentRun.uncheckedWarnings += 1
 
     def incompleteInputError(pos: Position, msg:String) =
       reporter.incompleteInputError(pos, msg) 

@@ -40,6 +40,7 @@ trait ParSeqLike[+T, +Repr <: Parallel, +Sequential <: Seq[T] with SeqLike[T, Se
 extends scala.collection.SeqLike[T, Repr]
    with ParIterableLike[T, Repr, Sequential] {
 self =>
+  import tasksupport._
   
   type SuperParIterator = ParIterableIterator[T]
   
@@ -72,10 +73,6 @@ self =>
     }
   }
   
-  /** A convenient shorthand for the signal context passing stackable modification.
-   */
-  //type SCPI <: SignalContextPassingIterator[ParIterator]
-  
   /** A more refined version of the iterator found in the `ParallelIterable` trait,
    *  this iterator can be split into arbitrary subsets of iterators.
    *  
@@ -104,6 +101,8 @@ self =>
     def head = self(i)
     
     final def remaining = end - i
+    
+    def dup = new Elements(i, end) with SignalContextPassingIterator[ParIterator]
     
     def split = psplit(remaining / 2, remaining - remaining / 2)
     
@@ -245,11 +244,12 @@ self =>
     val copystart = new Copy[U, That](() => pbf(repr), pits(0))
     val copymiddle = wrap {
       val tsk = new that.Copy[U, That](() => pbf(repr), that.parallelIterator)
-      tsk.compute
-      tsk.result
+      tasksupport.executeAndWaitResult(tsk)
     }
     val copyend = new Copy[U, That](() => pbf(repr), pits(2))
-    executeAndWaitResult(((copystart parallel copymiddle) { _ combine _ } parallel copyend) { _ combine _ } mapResult { _.result })
+    executeAndWaitResult(((copystart parallel copymiddle) { _ combine _ } parallel copyend) { _ combine _ } mapResult {
+      _.result
+    })
   } else patch_sequential(from, patch, replaced)
   
   private def patch_sequential[U >: T, That](from: Int, patch: Seq[U], r: Int)(implicit bf: CanBuildFrom[Repr, U, That]): That = {
@@ -303,6 +303,8 @@ self =>
   
   override def toString = seq.mkString(stringPrefix + "(", ", ", ")")
   
+  override def toParSeq = this.asInstanceOf[ParSeq[T]] // TODO add a type bound for `Repr`
+  
   override def view = new ParSeqView[T, Repr, Sequential] {
     protected lazy val underlying = self.repr
     def length = self.length
@@ -338,6 +340,7 @@ self =>
       for ((p, untilp) <- pits zip pits.scanLeft(0)(_ + _.remaining)) yield new SegmentLength(pred, from + untilp, p)
     }
     override def merge(that: SegmentLength) = if (result._2) result = (result._1 + that.result._1, that.result._2)
+    override def requiresStrictSplitters = true
   }
   
   protected[this] class IndexWhere(pred: T => Boolean, from: Int, protected[this] val pit: ParSeqIterator[T])
@@ -358,6 +361,7 @@ self =>
     override def merge(that: IndexWhere) = result = if (result == -1) that.result else {
       if (that.result != -1) result min that.result else result
     }
+    override def requiresStrictSplitters = true
   }
   
   protected[this] class LastIndexWhere(pred: T => Boolean, pos: Int, protected[this] val pit: ParSeqIterator[T])
@@ -378,6 +382,7 @@ self =>
     override def merge(that: LastIndexWhere) = result = if (result == -1) that.result else {
       if (that.result != -1) result max that.result else result
     }
+    override def requiresStrictSplitters = true
   }
   
   protected[this] class Reverse[U >: T, This >: Repr](cbf: () => Combiner[U, This], protected[this] val pit: ParSeqIterator[T])
@@ -410,6 +415,7 @@ self =>
       for ((p, op) <- pit.psplit(fp, sp) zip otherpit.psplit(fp, sp)) yield new SameElements(p, op)
     }
     override def merge(that: SameElements[U]) = result = result && that.result
+    override def requiresStrictSplitters = true
   }
   
   protected[this] class Updated[U >: T, That](pos: Int, elem: U, pbf: CanCombineFrom[Repr, U, That], protected[this] val pit: ParSeqIterator[T])
@@ -422,6 +428,7 @@ self =>
       for ((p, untilp) <- pits zip pits.scanLeft(0)(_ + _.remaining)) yield new Updated(pos - untilp, elem, pbf, p)
     }
     override def merge(that: Updated[U, That]) = result = result combine that.result
+    override def requiresStrictSplitters = true
   }
   
   protected[this] class Zip[U >: T, S, That](len: Int, pbf: CanCombineFrom[Repr, (U, S), That], protected[this] val pit: ParSeqIterator[T], val otherpit: ParSeqIterator[S])
@@ -456,6 +463,7 @@ self =>
       for ((p, op) <- pit.psplit(fp, sp) zip otherpit.psplit(fp, sp)) yield new Corresponds(corr, p, op)
     }
     override def merge(that: Corresponds[S]) = result = result && that.result
+    override def requiresStrictSplitters = true
   }
   
 }

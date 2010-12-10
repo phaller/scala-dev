@@ -8,12 +8,11 @@ package scala.tools.nsc
 
 import java.io.IOException
 import java.lang.{ClassNotFoundException, NoSuchMethodException}
-import java.lang.reflect.InvocationTargetException
 import java.net.{ URL, MalformedURLException }
 import scala.tools.util.PathResolver
 
 import io.{ File, Process }
-import util.{ ClassPath, ScalaClassLoader, waitingForThreads }
+import util.{ ClassPath, ScalaClassLoader }
 import Properties.{ versionString, copyrightString }
 
 /** An object that runs Scala code.  It has three possible
@@ -21,16 +20,22 @@ import Properties.{ versionString, copyrightString }
   * or interactive entry.
   */
 object MainGenericRunner {
-  def main(args: Array[String]) {    
-    def errorFn(str: String) = Console println str
-    def exitSuccess: Nothing = exit(0)
-    def exitFailure(msg: Any = null): Nothing = {
-      if (msg != null) errorFn(msg.toString)
-      exit(1)
-    }
-    def exitCond(b: Boolean): Nothing = if (b) exitSuccess else exitFailure(null)
-    
-    val command = new GenericRunnerCommand(args.toList, errorFn _)
+  def errorFn(ex: Throwable): Boolean = {
+    ex.printStackTrace()
+    false
+  }
+  def errorFn(str: String): Boolean = {
+    Console println str
+    false
+  }
+  
+  def main(args: Array[String]) {
+    if (!process(args))
+      system.exit(1)
+  }
+
+  def process(args: Array[String]): Boolean = {
+    val command = new GenericRunnerCommand(args.toList, (x: String) => errorFn(x))
     import command.settings
     def sampleCompiler = new Global(settings)   // def so its not created unless needed
     
@@ -64,12 +69,13 @@ object MainGenericRunner {
        */
       val fullArgs = command.thingToRun.toList ::: command.arguments
 
-      exitCond(ScriptRunner.runCommand(settings, combinedCode, fullArgs))
+      return ScriptRunner.runCommand(settings, combinedCode, fullArgs)
     }
     else command.thingToRun match {
       case None             =>
-        // Questionably, we start the interpreter when there are no arguments.
+        // We start the repl when no arguments are given.
         new InterpreterLoop main settings
+        true  // not actually reached in general
 
       case Some(thingToRun) =>
         val isObjectName =
@@ -78,21 +84,15 @@ object MainGenericRunner {
             case "script" => false
             case "guess"  => ScalaClassLoader.classExists(classpath, thingToRun)
           }
-
-        if (isObjectName)
-          try ObjectRunner.run(classpath, thingToRun, command.arguments)
-          catch {
-            case e @ (_: ClassNotFoundException | _: NoSuchMethodException) => exitFailure(e)
-            case e: InvocationTargetException =>
-              e.getCause.printStackTrace
-              exitFailure()
-          }
-        else
-          try exitCond(ScriptRunner.runScript(settings, thingToRun, command.arguments))
-          catch {
-            case e: IOException       => exitFailure(e.getMessage)
-            case e: SecurityException => exitFailure(e)
-          }
+        
+        val result =
+          if (isObjectName) ObjectRunner.runAndCatch(classpath, thingToRun, command.arguments)
+          else ScriptRunner.runScriptAndCatch(settings, thingToRun, command.arguments)
+        
+        result match {
+          case Left(ex) => errorFn(ex)
+          case Right(b) => b
+        }
     }
   }
 }

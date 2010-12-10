@@ -39,6 +39,32 @@ trait TypeDiagnostics {
   import definitions._
   import global.typer.infer
   
+  private def currentUnit = currentRun.currentUnit
+  
+  /** For ease of debugging.  The mode definitions are in Typers.scala.
+   */
+  private val modeNameMap = Map[Int, String](
+    (1 << 0)  -> "EXPRmode",
+    (1 << 1)  -> "PATTERNmode",
+    (1 << 2)  -> "TYPEmode",
+    (1 << 3)  -> "SCCmode",
+    (1 << 4)  -> "FUNmode",
+    (1 << 5)  -> "POLYmode",
+    (1 << 6)  -> "QUALmode",
+    (1 << 7)  -> "TAPPmode",
+    (1 << 8)  -> "SUPERCONSTRmode",
+    (1 << 9)  -> "SNDTRYmode",
+    (1 << 10) -> "LHSmode",
+    (1 << 11) -> "<DOES NOT EXIST mode>",
+    (1 << 12) -> "STARmode",
+    (1 << 13) -> "ALTmode",
+    (1 << 14) -> "HKmode",
+    (1 << 15) -> "BYVALmode",
+    (1 << 16) -> "TYPEPATmode"
+  )
+  def modeString(mode: Int): String =
+    (modeNameMap filterKeys (bit => (bit & mode) != 0)).values mkString " "
+  
   /** It can be quite difficult to know which of the many functions called "error"
    *  is being called at any given point in the compiler.  To alleviate this I am
    *  renaming such functions inside this trait based on where it originated.
@@ -52,6 +78,14 @@ trait TypeDiagnostics {
   def noErroneousTypes(tps: Type*)    = tps forall (x => !x.isErroneous)
   def noErroneousSyms(syms: Symbol*)  = syms forall (x => !x.isErroneous)
   def noErroneousTrees(trees: Tree*)  = trees forall (x => !x.isErroneous)
+  
+  /** For errors which are artifacts of the implementation: such messages
+   *  indicate that the restriction may be lifted in the future.
+   */
+  def restrictionWarning(pos: Position, unit: CompilationUnit, msg: String): Unit =
+    unit.warning(pos, "Implementation restriction: " + msg)
+  def restrictionError(pos: Position, unit: CompilationUnit, msg: String): Unit =
+    unit.error(pos, "Implementation restriction: " + msg)
   
   /** A map of Positions to addendums - if an error involves a position in
    *  the map, the addendum should also be printed.
@@ -111,11 +145,19 @@ trait TypeDiagnostics {
   def alternativesString(tree: Tree) =
     alternatives(tree) map (x => "  " + methodTypeErrorString(x)) mkString ("", " <and>\n", "\n")
 
-  def missingParameterTypeError(fun: Tree, vparam: ValDef) = {
-    val suffix = if (vparam.mods.isSynthetic) " for expanded function "+fun else ""
-    
-    inferError(vparam.pos, "missing parameter type" + suffix)
-    ErrorType
+  def missingParameterTypeMsg(fun: Tree, vparam: ValDef, pt: Type) = {
+    def anonMessage = (
+      "\nThe argument types of an anonymous function must be fully known. (SLS 8.5)" +
+      "\nExpected type was: " + pt.toLongString
+    )
+    val suffix =
+      if (!vparam.mods.isSynthetic) ""
+      else " for expanded function" + (fun match {
+        case Function(_, Match(_, _)) => anonMessage
+        case _                        => " " + fun
+      })
+
+    "missing parameter type" + suffix
   }
   
   def treeSymTypeMsg(tree: Tree): String = {
@@ -134,6 +176,22 @@ trait TypeDiagnostics {
     else if (sym.isModule) moduleMessage
     else if (sym.name == nme.apply) applyMessage
     else defaultMessage
+  }
+  
+  def notEnoughArgumentsMsg(fun: Tree, missing: List[Symbol]): String = {
+    val suffix = {
+      if (missing.isEmpty) ""
+      else {
+        val keep = missing take 3 map (_.name)
+        ".\nUnspecified value parameter%s %s".format(
+          if (missing.tail.isEmpty) "" else "s",
+          if (missing drop 3 nonEmpty) (keep :+ "...").mkString(", ")
+          else keep.mkString("", ", ", ".")
+        )
+      }
+    }
+
+    "not enough arguments for " + treeSymTypeMsg(fun) + suffix
   }
   
   def applyErrorMsg(tree: Tree, msg: String, argtpes: List[Type], pt: Type) = {
@@ -163,65 +221,106 @@ trait TypeDiagnostics {
       ";\n found   : " + found.toLongString + existentialContext(found) +
        "\n required: " + req + existentialContext(req)
     }
-
-  /** If two given types contain different type variables with the same name
-   *  differentiate the names by including owner information.  Also, if the
-   *  type error is because of a conflict between two identically named
-   *  classes and one is in package scala, fully qualify the name so one
-   *  need not deduce why "java.util.Iterator" and "Iterator" don't match.
-   *  Another disambiguation performed is to address the confusion present
-   *  in the following snippet:
-   *    def f[Int](x: Int) = x + 5.
-   */
-  def withDisambiguation[T](types: Type*)(op: => T): T = {
-    object SymExtractor {
-      def unapply(x: Any) = x match {
-        case t @ TypeRef(_, sym, _)   => Some(t -> sym)
-        case t @ ConstantType(value)  => Some(t -> t.underlying.typeSymbol)
-        case _                        => None
-      }
-    }
-    val typerefs =
-      for (tp <- types.toList ; SymExtractor(t, sym) <- tp) yield
-        t -> sym
-    
-    val savedNames    = typerefs map { case (_, sym) => sym -> sym.name } toMap
-    def restoreNames  = savedNames foreach { case (sym, name) => sym.name = name }
-
-    def isAlreadyAltered(sym: Symbol) = sym.name != savedNames(sym)
-    
-    def modifyName(sym: Symbol)(f: String => String): Unit =
+  
+  case class TypeDiag(tp: Type, sym: Symbol) extends Ordered[TypeDiag] {
+    // save the name because it will be mutated until it has been
+    // distinguished from the other types in the same error message
+    private val savedName = sym.name
+    def restoreName()     = sym.name = savedName
+    def isAltered         = sym.name != savedName
+    def modifyName(f: String => String) =
       sym.name = newTypeName(f(sym.name.toString))
 
-    def scalaQualify(sym: Symbol) =
-      if (sym.owner.isScalaPackageClass)
-        modifyName(sym)("scala." + _)
+    // functions to manipulate the name
+    def preQualify()   = modifyName(trueOwner.fullName + "." + _)
+    def postQualify()  = modifyName(_ + "(in " + trueOwner + ")")
+    def scalaQualify() = if (inPredefOrScala) preQualify()
+    def typeQualify()  = if (sym.isTypeParameterOrSkolem) postQualify()
+    def nameQualify()  = if (trueOwner.isPackageClass) preQualify() else postQualify()
 
-    def explainName(sym: Symbol) = {
-      scalaQualify(sym)
-      
-      if (!isAlreadyAltered(sym))
-        modifyName(sym)(_ + "(in " + sym.owner + ")")
+    def trueOwner  = tp.typeSymbol.owner.skipPackageObject
+    def aliasOwner = tp.typeSymbolDirect.owner.skipPackageObject
+    def owners     = List(trueOwner, aliasOwner)
+
+    private def scalaAndPredef = Set(ScalaPackageClass, PredefModuleClass)
+    def inPredefOrScala = owners exists scalaAndPredef
+    
+    def sym_==(other: TypeDiag)     = tp.typeSymbol == other.tp.typeSymbol
+    def owner_==(other: TypeDiag)   = trueOwner == other.trueOwner
+    def string_==(other: TypeDiag)  = tp.toString == other.tp.toString
+    def name_==(other: TypeDiag)    = sym.name == other.sym.name
+
+    def compare(other: TypeDiag) = 
+      if (this == other) 0
+      else if (sym isLess other.sym) -1
+      else 1
+
+    override def toString = {
+      """
+      |tp = %s
+      |tp.typeSymbol = %s
+      |tp.typeSymbol.owner = %s
+      |tp.typeSymbolDirect = %s
+      |tp.typeSymbolDirect.owner = %s
+      |inPredefOrScala = %s
+      """.stripMargin.format(
+        tp, tp.typeSymbol, tp.typeSymbol.owner, tp.typeSymbolDirect, tp.typeSymbolDirect.owner, inPredefOrScala
+      )
     }
+  }
+  private def typeDiags(types: Type*): List[TypeDiag] = {
+    object SymExtractor {
+      def unapply(x: Any) = x match {
+        case t @ ConstantType(_)    => Some(t -> t.underlying.typeSymbol)
+        case t @ TypeRef(_, sym, _) => Some(t -> sym)
+        case _                      => None
+      }
+    }
+    
+    for (tp <- types.toList ; SymExtractor(t, sym) <- tp) yield
+      TypeDiag(t, sym)
+  }
+  
+  /** The distinct pairs from an ordered list. */
+  private def pairs[T <: Ordered[T]](xs: Seq[T]): Seq[(T, T)] = {
+    for (el1 <- xs ; el2 <- xs ; if el1 < el2) yield
+      ((el1, el2))
+  }
 
-    ultimately(restoreNames) {
-      for ((t1, sym1) <- typerefs ; (t2, sym2) <- typerefs ; if sym1 != sym2 && (sym1 isLess sym2)) {
-                
-        if (t1.toString == t2.toString) {   // type variable collisions
-          List(sym1, sym2) foreach explainName
-          if (sym1.owner == sym2.owner)
-            sym2.name = newTypeName("(some other)"+sym2.name)
-        }
-        else if (sym1.name == sym2.name) {  // symbol name collisions
-          List(sym1, sym2) foreach { x =>
-            if (x.owner.isScalaPackageClass)
-              modifyName(x)("scala." + _)
-            else if (x.isTypeParameterOrSkolem)
-              explainName(x)
-          }
+  /** Given any number of types, alters the name information in the symbols
+   *  until they can be distinguished from one another: then executes the given
+   *  code.  The names are restored and the result is returned.
+   */
+  def withDisambiguation[T](types: Type*)(op: => T): T = {
+    val typeRefs = typeDiags(types: _*)
+    val toCheck  = pairs(typeRefs) filterNot { case (td1, td2) => td1 sym_== td2 }
+
+    ultimately(typeRefs foreach (_.restoreName())) {
+      for ((td1, td2) <- toCheck) {
+        val tds = List(td1, td2)
+
+        // If the types print identically, qualify them:
+        //   a) If the dealiased owner is a package, the full path
+        //   b) Otherwise, append (in <owner>)
+        if (td1 string_== td2)
+          tds foreach (_.nameQualify())
+
+        // If they have the same simple name, and either of them is in the
+        // scala package or predef, qualify with scala so it is not confusing why
+        // e.g. java.util.Iterator and Iterator are different types.
+        if (td1 name_== td2)
+          tds foreach (_.scalaQualify())
+
+        // If they still print identically:
+        //   a) If they are type parameters with different owners, append (in <owner>)
+        //   b) Failing that, the best we can do is append "(some other)" to the latter.
+        if (td1 string_== td2) {
+          if (td1 owner_== td2)
+            td2.modifyName("(some other)" + _)
+          else
+            tds foreach (_.typeQualify())
         }
       }
-      
       // performing the actual operation
       op
     }

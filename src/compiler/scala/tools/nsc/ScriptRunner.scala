@@ -13,13 +13,13 @@ import java.io.{
 }
 import java.io.{ File => JFile }
 import io.{ Directory, File, Path, PlainFile }
-import java.lang.reflect.InvocationTargetException
 import java.net.URL
 import java.util.jar.{ JarEntry, JarOutputStream }
 
-import util.waitingForThreads
+import util.{ waitingForThreads }
 import scala.tools.util.PathResolver
 import scala.tools.nsc.reporters.{Reporter,ConsoleReporter}
+import util.Exceptional.unwrap
 
 /** An object that runs Scala code in script files.
  *
@@ -56,14 +56,6 @@ object ScriptRunner {
   
   /** Default name to use for the wrapped script */
   val defaultScriptMain = "Main"
-  
-  /** Must be a daemon thread else scripts won't shut down: ticket #3678 */
-  private def addShutdownHook(body: => Unit) =
-    Runtime.getRuntime addShutdownHook {
-      val t = new Thread { override def run { body } }
-      t setDaemon true
-      t
-    }
 
   /** Pick a main object name from the specified settings */
   def scriptMain(settings: Settings) = settings.script.value match {
@@ -142,7 +134,7 @@ object ScriptRunner {
       scriptFileIn: String): Boolean =
   {
     val scriptFile        = Path(scriptFileIn).toAbsolute.path
-    val compSettingNames  = new Settings(error).visibleSettings.toList map (_.name)
+    val compSettingNames  = new Settings(system.error).visibleSettings.toList map (_.name)
     val compSettings      = settings.visibleSettings.toList filter (compSettingNames contains _.name)
     val coreCompArgs      = compSettings flatMap (_.unparse)
     val compArgs          = coreCompArgs ::: List("-Xscript", scriptMain(settings), scriptFile)
@@ -186,7 +178,7 @@ object ScriptRunner {
       val compiledPath = Directory makeTemp "scalascript"
 
       // delete the directory after the user code has finished
-      addShutdownHook(compiledPath.deleteRecursively())
+      system.addShutdownHook(compiledPath.deleteRecursively())
 
       settings.outdir.value = compiledPath.path
 
@@ -206,7 +198,7 @@ object ScriptRunner {
       else None  	      
     }
 
-    /** The script runner calls System.exit to communicate a return value, but this must
+    /** The script runner calls system.exit to communicate a return value, but this must
      *  not take place until there are no non-daemon threads running.  Tickets #1955, #2006.
      */
     waitingForThreads {
@@ -234,7 +226,7 @@ object ScriptRunner {
         else recompile()                            // jar old - recompile the script.
       }
       // don't use a cache jar at all--just use the class files
-      else compile map (cp => handler(cp.path)) getOrElse false
+      else compile exists (cp => handler(cp.path))
     }
   }
 
@@ -250,17 +242,9 @@ object ScriptRunner {
 	  val pr = new PathResolver(settings)
 	  val classpath = File(compiledLocation).toURL +: pr.asURLs
 
-    try { 
-      ObjectRunner.run(classpath, scriptMain(settings), scriptArgs)
-      true
-    }
-    catch {
-      case e @ (_: ClassNotFoundException | _: NoSuchMethodException) =>
-        Console println e
-        false
-      case e: InvocationTargetException =>
-        e.getCause.printStackTrace
-        false
+    ObjectRunner.runAndCatch(classpath, scriptMain(settings), scriptArgs) match {
+      case Left(ex) => ex.printStackTrace() ; false
+      case _        => true
     }
   }
 
@@ -278,6 +262,18 @@ object ScriptRunner {
 	    withCompiledScript(settings, scriptFile) { runCompiled(settings, _, scriptArgs) }
 	  else
 	    throw new IOException("no such file: " + scriptFile)
+  }
+  
+  /** Calls runScript and catches the enumerated exceptions, routing
+   *  them to Left(ex) if thrown.
+   */
+  def runScriptAndCatch(
+    settings: GenericRunnerSettings,
+		scriptFile: String,
+		scriptArgs: List[String]): Either[Throwable, Boolean] =
+	{
+	  try Right(runScript(settings, scriptFile, scriptArgs))
+	  catch { case e => Left(unwrap(e)) }
   }
 
   /** Run a command 
