@@ -215,7 +215,11 @@ abstract class UnPickler {
             // (3) Try as a nested object symbol.
             nestedObjectSymbol orElse {
               // (4) Otherwise, fail.
-              errorMissingRequirement(name, owner)                
+              //TR FIXME: this needs a proper fix!
+              //errorMissingRequirement(name, owner)
+              println("WARNING: class file needed by "+classRoot.name+" is missing.\n"+ 
+              "reference " + NameTransformer.decode(name.toString) + " of " + owner.tpe + " refers to nonexisting symbol.")
+              NoSymbol
             }
           }
         }

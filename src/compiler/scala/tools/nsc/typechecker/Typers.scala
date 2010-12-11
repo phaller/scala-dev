@@ -3305,7 +3305,7 @@ trait Typers { self: Analyzer =>
       }
       
       def typedApplyExternal(fun: Select, args: List[Tree], isApply: Boolean): Tree = {
-        val infixDebug = System.getProperty("infixVerbose") == "true"
+        val infixDebug = false //System.getProperty("infixVerbose") == "true"
         
         val Select(qual, name) = fun
         val extname = "infix_" + name
