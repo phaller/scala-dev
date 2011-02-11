@@ -236,23 +236,23 @@ abstract class TreeBuilder {
     if (tps.tail.isEmpty) tps.head
     else CompoundTypeTree(Template(tps, emptyValDef, Nil))
 
-  /** Create tree representing a while loop */
+  /** Create a tree representing a while loop */
   def makeWhileDo(cond: Tree, body: Tree): Tree =
     Apply(Ident(nme._whileDo), List(cond, body))
 
-  /** Create tree representing a do-while loop */
+  /** Create a tree representing a do-while loop */
   def makeDoWhile(body: Tree, cond: Tree): Tree =
     Apply(Ident(nme._doWhile), List(body, cond))
 
-  /** Create tree representing a do-while loop */
+  /** Create a tree representing a do-while loop */
   def makeIfThenElse(cond: Tree, thenp: Tree, elsep: Tree): Tree =
     Apply(Ident(nme._ifThenElse), List(cond, thenp, elsep))
 
-  /** Create tree representing a variable initializer */
+  /** Create a tree representing a variable initializer */
   def makeNewVar(expr: Tree): Tree =
     Apply(Ident(nme._newVar), List(expr))
 
-  /** Create tree representing a return statement */
+  /** Create a tree representing a return statement */
   def makeReturn(expr: Tree): Tree = 
     Apply(Ident(nme._return), List(expr))
   
