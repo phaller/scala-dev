@@ -270,6 +270,8 @@ trait Definitions extends reflect.generic.StandardDefinitions {
     lazy val PartialManifestModule = getModule("scala.reflect.ClassManifest")
     lazy val FullManifestClass     = getClass("scala.reflect.Manifest")
     lazy val FullManifestModule    = getModule("scala.reflect.Manifest")
+    lazy val SourceInfoManifestClass     = getClass("scala.reflect.SourceInfoManifest")
+    lazy val SourceInfoManifestModule    = getModule("scala.reflect.SourceInfoManifest")
     lazy val OptManifestClass      = getClass("scala.reflect.OptManifest")
     lazy val NoManifest            = getModule("scala.reflect.NoManifest")
     lazy val CodeClass             = getClass(sn.Code)

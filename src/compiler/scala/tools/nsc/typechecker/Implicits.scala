@@ -59,6 +59,9 @@ self: Analyzer =>
     stopCounter(subtypeImpl, subtypeStart)
     deindentTyping()
     printTyping("Implicit search yielded: "+ result)
+    if (result.tree.tpe.toString.contains("Manifest")) {
+      println("type of implicit: "+result.tree.tpe)
+    }
     result
   }
 
@@ -825,18 +828,21 @@ self: Analyzer =>
       * reflect.Manifest for type 'tp'. An EmptyTree is returned if
       * no manifest is found. todo: make this instantiate take type params as well?
       */
-    private def manifestOfType(tp: Type, full: Boolean): SearchResult = {
+    private def manifestOfType(tp: Type, full: Boolean, withSourceInfo: Boolean = false): SearchResult = {
       
       /** Creates a tree that calls the factory method called constructor in object reflect.Manifest */
-      def manifestFactoryCall(constructor: String, tparg: Type, args: Tree*): Tree =
+      def manifestFactoryCall(line: Option[Int], constructor: String, tparg: Type, args: Tree*): Tree =
         if (args contains EmptyTree) EmptyTree
         else typedPos(tree.pos.focus) {
           Apply(
             TypeApply(
-              Select(gen.mkAttributedRef(if (full) FullManifestModule else PartialManifestModule), constructor),
+              Select(gen.mkAttributedRef(if (withSourceInfo) SourceInfoManifestModule else {
+                if (full) FullManifestModule else PartialManifestModule
+              }), constructor),
               List(TypeTree(tparg))
             ),
-            args.toList
+            if (line.isEmpty) args.toList
+            else (Literal(line.get) setPos tree.pos.focus) :: args.toList
           )
         }
       
@@ -857,7 +863,7 @@ self: Analyzer =>
         val tp1 = tp0.normalize
         tp1 match {
           case ThisType(_) | SingleType(_, _) if !(tp1 exists {tp => tp.typeSymbol.isExistentiallyBound}) => // can't generate a reference to a value that's abstracted over by an existential
-            manifestFactoryCall("singleType", tp, gen.mkAttributedQualifier(tp1)) 
+            manifestFactoryCall(None, "singleType", tp, gen.mkAttributedQualifier(tp1)) 
           case ConstantType(value) =>
             manifestOfType(tp1.deconst, full)
           case TypeRef(pre, sym, args) =>
@@ -868,7 +874,7 @@ self: Analyzer =>
             } else if (sym == RepeatedParamClass || sym == ByNameParamClass) {
               EmptyTree
             } else if (sym == ArrayClass && args.length == 1) {
-              manifestFactoryCall("arrayType", args.head, findManifest(args.head))
+              manifestFactoryCall(None, "arrayType", args.head, findManifest(args.head))
             } else if (sym.isClass) {
               val classarg0 = gen.mkClassOf(tp1) 
               val classarg = tp match {
@@ -879,12 +885,13 @@ self: Analyzer =>
                   classarg0
               }
               val suffix = classarg :: (args map findSubManifest)
+              // also pass position of tree as argument to factory method call
               manifestFactoryCall(
-                "classType", tp,
+                Some(tree.pos.line), "classType", tp,
                 (if ((pre eq NoPrefix) || pre.typeSymbol.isStaticOwner) suffix
                  else findSubManifest(pre) :: suffix): _*)
             } else if (sym.isExistentiallyBound && full) {
-              manifestFactoryCall("wildcardType", tp,
+              manifestFactoryCall(None, "wildcardType", tp,
                                   findManifest(tp.bounds.lo), findManifest(tp.bounds.hi))
             } else if(undetParams contains sym) { // looking for a manifest of a type parameter that hasn't been inferred by now, can't do much, but let's not fail
               mot(NothingClass.tpe)(sym :: from, NothingClass.tpe :: to) // #3859: need to include the mapping from sym -> NothingClass.tpe in the SearchResult
@@ -894,7 +901,7 @@ self: Analyzer =>
           case RefinedType(parents, decls) =>
             // refinement is not generated yet
             if (parents.length == 1) findManifest(parents.head)
-            else if (full) manifestFactoryCall("intersectionType", tp, parents map (findSubManifest(_)): _*)
+            else if (full) manifestFactoryCall(None, "intersectionType", tp, parents map (findSubManifest(_)): _*)
             else mot(erasure.erasure.intersectionDominator(parents))
           case ExistentialType(tparams, result) =>
             mot(tp1.skolemizeExistential)
@@ -904,7 +911,7 @@ self: Analyzer =>
       }
 
       mot(tp)
-    }
+    } // manifestOfType
 
     def wrapResult(tree: Tree): SearchResult = 
       if (tree == EmptyTree) SearchFailure else new SearchResult(tree, EmptyTreeTypeSubstituter)
@@ -913,15 +920,29 @@ self: Analyzer =>
      */
     private def implicitManifestOrOfExpectedType(pt: Type): SearchResult = pt.dealias match {
       case TypeRef(_, FullManifestClass, List(arg)) => 
+        println("searching manifest of type "+pt)
         manifestOfType(arg, true)
       case TypeRef(_, PartialManifestClass, List(arg)) => 
         manifestOfType(arg, false)
       case TypeRef(_, OptManifestClass, List(arg)) => 
         val res = manifestOfType(arg, false)
         if (res == SearchFailure) wrapResult(gen.mkAttributedRef(NoManifest)) else res
+      case TypeRef(_, SourceInfoManifestClass, List(arg)) =>
+        println("searching SourceInfoManifest of type "+pt)
+        val res = manifestOfType(arg, true, true) // with source info
+/*        val updatedRes = new SearchResult(typedPos(tree.pos.focus) {
+          Apply(Select(res.tree, "update"), List(Literal(tree.pos.line)))
+        }, res.subst)
+        updatedRes
+        */
+        res
+      case TypeRef(_, SourceInfoManifestClass, _) =>
+        println("searching manifest of type "+pt)
+        throw new Exception
       case TypeRef(_, tsym, _) if (tsym.isAbstractType) =>
         implicitManifestOrOfExpectedType(pt.bounds.lo)
       case _ =>
+        println("searching implicit for pt "+pt)
         searchImplicit(implicitsOfExpectedType, false) // shouldn't we pass `pt` to `implicitsOfExpectedType`, or is the recursive case for an abstract type really only meant for manifests?
     }
             
@@ -960,7 +981,10 @@ self: Analyzer =>
       if (result == SearchFailure && settings.debug.value)
         log("no implicits found for "+pt+" "+pt.typeSymbol.info.baseClasses+" "+implicitsOfExpectedType)
 
-      result
+      val updatedRes = if (pt.toString.contains("SourceInfoManifest")) new SearchResult(typedPos(tree.pos.focus) {
+        Apply(Select(result.tree, "update"), List(Literal(tree.pos.line)))
+      }, result.subst) else result
+      updatedRes
     }
 
     def allImplicits: List[SearchResult] = {

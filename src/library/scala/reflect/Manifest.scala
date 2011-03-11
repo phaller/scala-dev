@@ -25,7 +25,7 @@ trait Manifest[T] extends ClassManifest[T] with Equals {
   override def typeArguments: List[Manifest[_]] = List()
 
   override def arrayManifest: Manifest[Array[T]] = 
-    Manifest.classType[Array[T]](arrayClass[T](erasure))
+    Manifest.classType[Array[T]](0, arrayClass[T](erasure))
 
   override def canEqual(that: Any): Boolean = that match {
     case _: Manifest[_]   => true
@@ -143,7 +143,7 @@ object Manifest {
     private def readResolve(): Any = Manifest.Unit
   }
 
-  val Any: Manifest[Any] = new ClassTypeManifest[scala.Any](None, ObjectClass, Nil) {
+  val Any: Manifest[Any] = new ClassTypeManifest[scala.Any](0, None, ObjectClass, Nil) {
     override def toString = "Any"
     override def <:<(that: ClassManifest[_]): Boolean = (that eq this)
     override def equals(that: Any): Boolean = this eq that.asInstanceOf[AnyRef]
@@ -151,7 +151,7 @@ object Manifest {
     private def readResolve(): Any = Manifest.Any
   }
 
-  val Object: Manifest[Object] = new ClassTypeManifest[java.lang.Object](None, ObjectClass, Nil) {
+  val Object: Manifest[Object] = new ClassTypeManifest[java.lang.Object](0, None, ObjectClass, Nil) {
     override def toString = "Object"
     override def <:<(that: ClassManifest[_]): Boolean = (that eq this) || (that eq Any)
     override def equals(that: Any): Boolean = this eq that.asInstanceOf[AnyRef]
@@ -159,7 +159,7 @@ object Manifest {
     private def readResolve(): Any = Manifest.Object
   }
 
-  val AnyVal: Manifest[AnyVal] = new ClassTypeManifest[scala.AnyVal](None, ObjectClass, Nil) {
+  val AnyVal: Manifest[AnyVal] = new ClassTypeManifest[scala.AnyVal](0, None, ObjectClass, Nil) {
     override def toString = "AnyVal"
     override def <:<(that: ClassManifest[_]): Boolean = (that eq this) || (that eq Any)
     override def equals(that: Any): Boolean = this eq that.asInstanceOf[AnyRef]
@@ -167,7 +167,7 @@ object Manifest {
     private def readResolve(): Any = Manifest.AnyVal
   }
 
-  val Null: Manifest[Null] = new ClassTypeManifest[scala.Null](None, ObjectClass, Nil) {
+  val Null: Manifest[Null] = new ClassTypeManifest[scala.Null](0, None, ObjectClass, Nil) {
     override def toString = "Null"
     override def <:<(that: ClassManifest[_]): Boolean =
       (that ne null) && (that ne Nothing) && !(that <:< AnyVal)
@@ -176,7 +176,7 @@ object Manifest {
     private def readResolve(): Any = Manifest.Null
   }
 
-  val Nothing: Manifest[Nothing] = new ClassTypeManifest[scala.Nothing](None, ObjectClass, Nil) {
+  val Nothing: Manifest[Nothing] = new ClassTypeManifest[scala.Nothing](0, None, ObjectClass, Nil) {
     override def toString = "Nothing"
     override def <:<(that: ClassManifest[_]): Boolean = (that ne null)
     override def equals(that: Any): Boolean = this eq that.asInstanceOf[AnyRef]
@@ -200,25 +200,28 @@ object Manifest {
     *       pass varargs as arrays into this, we get an infinitely recursive call
     *       to boxArray. (Besides, having a separate case is more efficient)
     */
-  def classType[T](clazz: Predef.Class[_]): Manifest[T] =
-    new ClassTypeManifest[T](None, clazz, Nil)
+  def classType[T](line: Int, clazz: Predef.Class[_]): Manifest[T] =
+    new ClassTypeManifest[T](line, None, clazz, Nil)
 
   /** Manifest for the class type `clazz', where `clazz' is
     * a top-level or static class and args are its type arguments. */
-  def classType[T](clazz: Predef.Class[T], arg1: Manifest[_], args: Manifest[_]*): Manifest[T] =
-    new ClassTypeManifest[T](None, clazz, arg1 :: args.toList)
+  def classType[T](line: Int, clazz: Predef.Class[T], arg1: Manifest[_], args: Manifest[_]*): Manifest[T] =
+    new ClassTypeManifest[T](line, None, clazz, arg1 :: args.toList)
 
   /** Manifest for the class type `clazz[args]', where `clazz' is
     * a class with non-package prefix type `prefix` and type arguments `args`.
     */
-  def classType[T](prefix: Manifest[_], clazz: Predef.Class[_], args: Manifest[_]*): Manifest[T] =
-    new ClassTypeManifest[T](Some(prefix), clazz, args.toList)
+  def classType[T](line: Int, prefix: Manifest[_], clazz: Predef.Class[_], args: Manifest[_]*): Manifest[T] =
+    new ClassTypeManifest[T](line, Some(prefix), clazz, args.toList)
 
   /** Manifest for the class type `clazz[args]', where `clazz' is
     * a top-level or static class. */
-  private class ClassTypeManifest[T](prefix: Option[Manifest[_]], 
+  private class ClassTypeManifest[T](line: Int,
+                                     prefix: Option[Manifest[_]], 
                                      val erasure: Predef.Class[_], 
                                      override val typeArguments: List[Manifest[_]]) extends Manifest[T] {
+//    override def line = Some(line)
+
     override def toString = 
       (if (prefix.isEmpty) "" else prefix.get.toString+"#") +
       (if (erasure.isArray) "Array" else erasure.getName) +

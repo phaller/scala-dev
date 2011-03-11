@@ -86,7 +86,7 @@ trait ClassManifest[T] extends OptManifest[T] with Equals with Serializable {
     java.lang.reflect.Array.newInstance(tp, 0).getClass.asInstanceOf[Predef.Class[Array[T]]]
 
   def arrayManifest: ClassManifest[Array[T]] = 
-    ClassManifest.classType[Array[T]](arrayClass[T](erasure))
+    ClassManifest.classType[Array[T]](0, arrayClass[T](erasure))
 
   def newArray(len: Int): Array[T] =
     java.lang.reflect.Array.newInstance(erasure, len).asInstanceOf[Array[T]]
@@ -159,7 +159,7 @@ object ClassManifest {
     case java.lang.Double.TYPE => Double.asInstanceOf[ClassManifest[T]]
     case java.lang.Boolean.TYPE => Boolean.asInstanceOf[ClassManifest[T]]
     case java.lang.Void.TYPE => Unit.asInstanceOf[ClassManifest[T]]
-    case _ => classType[T with AnyRef](clazz).asInstanceOf[ClassManifest[T]]
+    case _ => classType[T with AnyRef](0, clazz).asInstanceOf[ClassManifest[T]]
   }
 
   def singleType[T <: AnyRef](value: AnyRef): Manifest[T] = Manifest.singleType(value)
@@ -172,18 +172,27 @@ object ClassManifest {
     *       to boxArray. (Besides, having a separate case is more efficient)
     */
   def classType[T <: AnyRef](clazz: Predef.Class[_]): ClassManifest[T] =
-    new ClassTypeManifest[T](None, clazz, Nil)
+    new ClassTypeManifest[T](0, None, clazz, Nil)
+
+  def classType[T <: AnyRef](line: Int, clazz: Predef.Class[_]): ClassManifest[T] =
+    new ClassTypeManifest[T](line, None, clazz, Nil)
 
   /** ClassManifest for the class type `clazz[args]', where `clazz' is
     * a top-level or static class and `args` are its type arguments */
   def classType[T <: AnyRef](clazz: Predef.Class[_], arg1: OptManifest[_], args: OptManifest[_]*): ClassManifest[T] =
-    new ClassTypeManifest[T](None, clazz, arg1 :: args.toList)
+    new ClassTypeManifest[T](0, None, clazz, arg1 :: args.toList)
+
+  def classType[T <: AnyRef](line: Int, clazz: Predef.Class[_], arg1: OptManifest[_], args: OptManifest[_]*): ClassManifest[T] =
+    new ClassTypeManifest[T](line, None, clazz, arg1 :: args.toList)
 
   /** ClassManifest for the class type `clazz[args]', where `clazz' is
     * a class with non-package prefix type `prefix` and type arguments `args`.
     */
+  def classType[T <: AnyRef](line: Int, prefix: OptManifest[_], clazz: Predef.Class[_], args: OptManifest[_]*): ClassManifest[T] =
+    new ClassTypeManifest[T](line, Some(prefix), clazz, args.toList)
+
   def classType[T <: AnyRef](prefix: OptManifest[_], clazz: Predef.Class[_], args: OptManifest[_]*): ClassManifest[T] =
-    new ClassTypeManifest[T](Some(prefix), clazz, args.toList)
+    new ClassTypeManifest[T](0, Some(prefix), clazz, args.toList)
 
   def arrayType[T](arg: OptManifest[_]): ClassManifest[Array[T]] = arg match {
     case NoManifest => Object.asInstanceOf[ClassManifest[Array[T]]]
@@ -216,11 +225,14 @@ object ClassManifest {
 /** Manifest for the class type `clazz[args]', where `clazz' is
   * a top-level or static class. */
 private class ClassTypeManifest[T <: AnyRef](
+  l: Int,
   prefix: Option[OptManifest[_]], 
   val erasure: Predef.Class[_], 
   override val typeArguments: List[OptManifest[_]]) extends ClassManifest[T]
 {
-  override def toString = 
+//  override def line = Some(l)
+
+  override def toString = "@l"+l+": "+
     (if (prefix.isEmpty) "" else prefix.get.toString+"#") + 
     (if (erasure.isArray) "Array" else erasure.getName) +
     argString
