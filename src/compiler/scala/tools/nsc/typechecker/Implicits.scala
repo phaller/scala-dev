@@ -60,7 +60,7 @@ self: Analyzer =>
     deindentTyping()
     printTyping("Implicit search yielded: "+ result)
     if (result.tree.tpe.toString.contains("Manifest")) {
-      println("type of implicit: "+result.tree.tpe)
+      //println("type of implicit: "+result.tree.tpe)
     }
     result
   }
@@ -831,7 +831,7 @@ self: Analyzer =>
     private def manifestOfType(tp: Type, full: Boolean, withSourceInfo: Boolean = false): SearchResult = {
       
       /** Creates a tree that calls the factory method called constructor in object reflect.Manifest */
-      def manifestFactoryCall(line: Option[Int], constructor: String, tparg: Type, args: Tree*): Tree =
+      def manifestFactoryCall(sourceInfo: Option[Tree], constructor: String, tparg: Type, args: Tree*): Tree =
         if (args contains EmptyTree) EmptyTree
         else typedPos(tree.pos.focus) {
           Apply(
@@ -841,8 +841,8 @@ self: Analyzer =>
               }), constructor),
               List(TypeTree(tparg))
             ),
-            if (line.isEmpty) args.toList
-            else (Literal(line.get) setPos tree.pos.focus) :: args.toList
+            if (sourceInfo.isEmpty) args.toList
+            else (sourceInfo.get setPos tree.pos.focus) :: args.toList
           )
         }
       
@@ -856,6 +856,41 @@ self: Analyzer =>
         inferImplicit(tree, appliedType(manifestClass.typeConstructor, List(tp)), true, false, context).tree
 
       def findSubManifest(tp: Type) = findManifest(tp, if (full) FullManifestClass else OptManifestClass)
+      
+      def findOuterValDef(ctx: Context): Option[ValDef] = ctx.tree match {
+        case vd @ ValDef(mods, name, _, rhs) =>
+          println("found ValDef: "+name)
+          Some(vd)
+        case _ if ctx.outer != ctx =>
+          findOuterValDef(ctx.outer)
+        case _ =>
+          None
+      }
+      
+      def contextSourceInfoChain(ctx: Context, stopAt: Context): List[(String, Int)] = {
+        if (ctx == stopAt)
+          List()
+        else ctx.tree match {
+          case vd @ ValDef(_, name, _, _) =>
+            (name.toString, vd.pos.line) :: contextSourceInfoChain(ctx.outer, stopAt)
+          //case app @ Apply(fun, args) if fun.symbol.isMethod =>
+          //  (fun.symbol.nameString, fun.pos.line) :: contextSourceInfoChain(ctx.outer, stopAt)
+          case _ =>
+            contextSourceInfoChain(ctx.outer, stopAt)
+        }
+      }
+      
+      def ListModule_apply = getMember(ListModule, nme.apply)
+      
+      def sourceInfoTree(chain: List[(String, Int)]): Tree = chain match {
+        case (name, line) :: rest =>
+          val pairTree = gen.mkTuple(List(Literal(name), Literal(line)))
+          //gen.mkNewCons(pairTree, sourceInfoTree(rest))
+          Apply(Select(gen.mkAttributedRef(ListModule), nme.apply), List(pairTree))
+        case List() =>
+          gen.mkNil
+      }
+      
       def mot(tp0: Type)(implicit from: List[Symbol] = List(), to: List[Type] = List()): SearchResult = {
         implicit def wrapResult(tree: Tree): SearchResult = 
           if (tree == EmptyTree) SearchFailure else new SearchResult(tree, new TreeTypeSubstituter(from, to))
@@ -885,9 +920,23 @@ self: Analyzer =>
                   classarg0
               }
               val suffix = classarg :: (args map findSubManifest)
-              // also pass position of tree as argument to factory method call
+              //findOuterValDef(context0)
+              val contextInfoChain = context0.tree match {
+                case vd @ ValDef(_, name, _, _) =>
+                  //println("current context tree is ValDef "+name)
+                  contextSourceInfoChain(context0, context0.enclClass)
+                case _ =>
+                  //println("current context tree: "+context0.tree)
+                  (null, tree.pos.line) :: contextSourceInfoChain(context0.outer, context0.outer.enclClass)
+              }
+              //println("context info chain of classType manifest:")
+              //println(contextInfoChain)
+              //println("source info tree:")
+              //println(sourceInfoTree(contextInfoChain))
+
               manifestFactoryCall(
-                Some(tree.pos.line), "classType", tp,
+                //Some(Literal(tree.pos.line)), "classType", tp,
+                Some(sourceInfoTree(contextInfoChain)), "classType", tp,
                 (if ((pre eq NoPrefix) || pre.typeSymbol.isStaticOwner) suffix
                  else findSubManifest(pre) :: suffix): _*)
             } else if (sym.isExistentiallyBound && full) {
@@ -920,7 +969,6 @@ self: Analyzer =>
      */
     private def implicitManifestOrOfExpectedType(pt: Type): SearchResult = pt.dealias match {
       case TypeRef(_, FullManifestClass, List(arg)) => 
-        println("searching manifest of type "+pt)
         manifestOfType(arg, true)
       case TypeRef(_, PartialManifestClass, List(arg)) => 
         manifestOfType(arg, false)
@@ -928,21 +976,10 @@ self: Analyzer =>
         val res = manifestOfType(arg, false)
         if (res == SearchFailure) wrapResult(gen.mkAttributedRef(NoManifest)) else res
       case TypeRef(_, SourceInfoManifestClass, List(arg)) =>
-        println("searching SourceInfoManifest of type "+pt)
-        val res = manifestOfType(arg, true, true) // with source info
-/*        val updatedRes = new SearchResult(typedPos(tree.pos.focus) {
-          Apply(Select(res.tree, "update"), List(Literal(tree.pos.line)))
-        }, res.subst)
-        updatedRes
-        */
-        res
-      case TypeRef(_, SourceInfoManifestClass, _) =>
-        println("searching manifest of type "+pt)
-        throw new Exception
+        manifestOfType(arg, true, true) // with source info
       case TypeRef(_, tsym, _) if (tsym.isAbstractType) =>
         implicitManifestOrOfExpectedType(pt.bounds.lo)
       case _ =>
-        println("searching implicit for pt "+pt)
         searchImplicit(implicitsOfExpectedType, false) // shouldn't we pass `pt` to `implicitsOfExpectedType`, or is the recursive case for an abstract type really only meant for manifests?
     }
             
@@ -981,9 +1018,13 @@ self: Analyzer =>
       if (result == SearchFailure && settings.debug.value)
         log("no implicits found for "+pt+" "+pt.typeSymbol.info.baseClasses+" "+implicitsOfExpectedType)
 
-      val updatedRes = if (pt.toString.contains("SourceInfoManifest")) new SearchResult(typedPos(tree.pos.focus) {
-        Apply(Select(result.tree, "update"), List(Literal(tree.pos.line)))
-      }, result.subst) else result
+      val updatedRes = pt match {
+        case TypeRef(_, SourceInfoManifestClass, _) =>
+          new SearchResult(typedPos(tree.pos.focus) {
+            Apply(Select(result.tree, "update"), List(Literal(tree.pos.line)))
+          }, result.subst)
+        case _ => result
+      }
       updatedRes
     }
 
