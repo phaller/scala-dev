@@ -10,6 +10,7 @@
 package scala.actors
 
 import java.util.{Timer, TimerTask}
+import scala.util.continuations._
 
 /** 
  * Extends the [[scala.actors.Reactor]]
@@ -103,7 +104,7 @@ trait ReplyReactor extends Reactor[Any] with ReactorCanReply {
   private[actors] override def makeReaction(fun: () => Unit, handler: PartialFunction[Any, Any], msg: Any): Runnable =
     new ReplyReactorTask(this, fun, handler, msg)
 
-  protected[actors] override def react(handler: PartialFunction[Any, Unit]): Nothing = {
+  protected[actors] override def react(handler: PartialFunction[Any, Unit]): /*Nothing*/Unit @suspendable = {
     assert(Actor.rawSelf(scheduler) == this, "react on channel belonging to other actor")
     super.react(handler)
   }

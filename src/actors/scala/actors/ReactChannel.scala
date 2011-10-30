@@ -9,6 +9,8 @@
 
 package scala.actors
 
+import scala.util.continuations._
+
 /**
  * @author Philipp Haller
  */
@@ -52,7 +54,7 @@ private[actors] class ReactChannel[Msg](receiver: ReplyReactor) extends InputCha
    *
    * @param  f    a partial function with message patterns and actions
    */
-  def react(f: PartialFunction[Msg, Unit]): Nothing = {
+  def react(f: PartialFunction[Msg, Unit]): /*Nothing*/Unit @suspendable = {
     val C = this
     receiver.react {
       case SendToReactor(C, msg) if (f.isDefinedAt(msg.asInstanceOf[Msg])) =>

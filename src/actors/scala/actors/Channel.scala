@@ -10,6 +10,7 @@
 package scala.actors
 
 import scala.concurrent.SyncVar
+import scala.util.continuations._
 
 /**
  *  Used to pattern match on values that were sent
@@ -74,7 +75,7 @@ class Channel[Msg](val receiver: Actor) extends InputChannel[Msg] with OutputCha
     }
   }
 
-  def react(f: PartialFunction[Msg, Unit]): Nothing = {
+  def react(f: PartialFunction[Msg, Unit]): /*Nothing*/Unit @suspendable = {
     val C = this.asInstanceOf[Channel[Any]]
     receiver.react {
       case C ! msg if (f.isDefinedAt(msg.asInstanceOf[Msg])) => f(msg.asInstanceOf[Msg])
@@ -120,8 +121,10 @@ class Channel[Msg](val receiver: Actor) extends InputChannel[Msg] with OutputCha
         def receiver =
           ftch.receiver
       })
-      ftch.react {
-        case any => res.set(any)
+      reset {
+        ftch.react {
+          case any => res.set(any)
+        }
       }
     }
     val a = new FutureActor[A](fun, c)

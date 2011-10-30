@@ -11,6 +11,7 @@ package scala.actors
 package remote
 
 import scala.collection.mutable.HashMap
+import scala.util.continuations._
 
 /**
  * @author Philipp Haller
@@ -116,8 +117,7 @@ private[remote] class DelegateActor(creator: Proxy, node: Node, name: Symbol, ke
   var channelMap = new HashMap[Symbol, OutputChannel[Any]]
   var sessionMap = new HashMap[OutputChannel[Any], Symbol]
 
-  def act() {
-    Actor.loop {
+  def repeat(): Unit @suspendable = {
       react {
         case cmd@Apply0(rfun) =>
           kernel.remoteApply(node, name, sender, rfun)
@@ -180,7 +180,12 @@ private[remote] class DelegateActor(creator: Proxy, node: Node, name: Symbol, ke
             kernel.forward(sender, node, name, msg, 'nosession)
           }
       }
-    }
+
+    repeat()
+  }
+
+  def act() {
+    reset { repeat() }
   }
 
 }

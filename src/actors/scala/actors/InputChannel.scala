@@ -9,6 +9,8 @@
 
 package scala.actors
 
+import scala.util.continuations._
+
 /**
  * A common interface for all channels from which values can be received.
  *
@@ -44,7 +46,7 @@ trait InputChannel[+Msg] {
    *
    * @param  f    a partial function with message patterns and actions
    */
-  def react(f: PartialFunction[Msg, Unit]): Nothing
+  def react(f: PartialFunction[Msg, Unit]): /*Nothing*/Unit @suspendable
 
   /**
    * Receives a message from this $channel within

@@ -11,6 +11,7 @@ package scala.actors
 
 import scala.actors.scheduler.DaemonScheduler
 import scala.concurrent.SyncVar
+import scala.util.continuations._
 
 /** A function of arity 0, returing a value of type `T` that,
  *  when applied, blocks the current actor (`Actor.self`)
@@ -69,8 +70,10 @@ private class FutureActor[T](fun: SyncVar[T] => Unit, channel: Channel[T]) exten
     if (isSet) k(fvalueTyped)
     else {
       val ft = this !! Eval
-      ft.inputChannel.react {
-        case _ => k(fvalueTyped)
+      reset {
+        ft.inputChannel.react {
+          case _ => k(fvalueTyped)
+        }
       }
     }
   }
@@ -84,6 +87,13 @@ private class FutureActor[T](fun: SyncVar[T] => Unit, channel: Channel[T]) exten
       }
     }
     channel
+  }
+
+  def looping(): Unit @suspendable = {
+    react {
+      case Eval => reply()
+    }
+    looping()
   }
 
   def act() {
@@ -100,10 +110,8 @@ private class FutureActor[T](fun: SyncVar[T] => Unit, channel: Channel[T]) exten
           channel ! v
       }
 
-      loop {
-        react {
-          case Eval => reply()
-        }
+      reset {
+        looping()
       }
     }
   }
