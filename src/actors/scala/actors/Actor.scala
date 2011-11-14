@@ -457,6 +457,8 @@ trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with Inpu
   @volatile
   private var received: Option[Any] = None
 
+  private[actors] override def isActor = true
+
   protected[actors] override def scheduler: IScheduler = Scheduler
 
   private[actors] override def startSearch(msg: Any, replyTo: OutputChannel[Any], handler: PartialFunction[Any, Any]) =
