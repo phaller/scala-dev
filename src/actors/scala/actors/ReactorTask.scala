@@ -17,7 +17,7 @@ import scala.concurrent.forkjoin.RecursiveAction
 /**
  *  @author Philipp Haller
  */
-private[actors] class ReactorTask[Msg >: Null](var reactor: Reactor[Msg],
+private[actors] class ReactorTask[Msg >: Null](var reactor: InternalReactor[Msg],
                                                var fun: () => Any,
                                                var handler: PartialFunction[Msg, Any],
                                                var msg: Msg)
@@ -35,8 +35,8 @@ private[actors] class ReactorTask[Msg >: Null](var reactor: Reactor[Msg],
         case _: KillActorControl =>
           // do nothing
 
-        case e: Exception if reactor.exceptionHandler.isDefinedAt(e) =>
-          reactor.exceptionHandler(e)
+        case e: Exception if reactor.internalExceptionHandler.isDefinedAt(e) =>
+          reactor.internalExceptionHandler(e)
       }
       reactor.kill()
     }

@@ -441,7 +441,7 @@ object Actor extends Combinators {
  * @define channel actor's mailbox
  */
 @SerialVersionUID(-781154067877019505L)
-trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with InputChannel[Any] with Serializable {
+trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with InputChannel[Any] with Serializable with RichActor {
 
   /* The following two fields are only used when the actor
    * suspends by blocking its underlying thread, for example,
@@ -506,6 +506,9 @@ trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with Inpu
 
   private[actors] override def makeReaction(fun: () => Unit, handler: PartialFunction[Any, Any], msg: Any): Runnable =
     new ActorTask(this, fun, handler, msg)
+
+  def handle: PartialFunction[Any, Unit @suspendable] =
+    Map()
 
   /** See the companion object's `receive` method. */
   def receive[R](f: PartialFunction[Any, R]): R = {
