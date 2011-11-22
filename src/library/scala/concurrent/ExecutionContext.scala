@@ -66,6 +66,24 @@ private[concurrent] class ForkJoinExecutionContext extends ExecutionContext {
     new ForkJoinPromise(this, () => body, 0L) // TODO: problematic: creates closure
 }
 
+/**
+ * Implements a blocking execution context
+ */
+private[concurrent] class BlockingExecutionContext extends ExecutionContext {
+  val pool = makeCachedThreadPool // TODO FIXME: need to merge thread pool factory methods from Heather's parcolls repo
+
+  def execute(task: Runnable) {
+    val p = newPromise(task.run())
+    p.start()
+    pool execute p
+  }
+
+  // TODO FIXME: implement
+  def newPromise[T](body: => T): Promise[T] = {
+    throw new Exception("not yet implemented")
+  }
+}
+
 object ExecutionContext {
 
   
