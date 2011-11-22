@@ -14,6 +14,7 @@ package scala.actors
  *
  * @define actor actor
  */
+@deprecated("Extend RichActor instead. AbstractActor will be removed from scala library and replaced with AKKA actor implementation.", "2.10")
 trait AbstractActor extends OutputChannel[Any] with CanReply[Any, Any] {
 
   type Future[+R] <: scala.actors.Future[R]

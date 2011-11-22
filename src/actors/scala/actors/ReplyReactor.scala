@@ -22,6 +22,7 @@ import scala.util.continuations._
  *
  *  @define actor `ReplyReactor`
  */
+@deprecated("Extend RichActor instead. Actor will be removed from scala library and replaced with AKKA actor implementation.", "2.10")
 trait ReplyReactor extends Reactor[Any] with ReactorCanReply {
 
   /* A list of the current senders. The head of the list is

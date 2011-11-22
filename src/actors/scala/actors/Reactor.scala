@@ -53,6 +53,7 @@ private[actors] object Reactor {
  *
  * @define actor reactor
  */
+@deprecated("Extend RichActor instead. Actor will be removed from scala library and replaced with AKKA actor implementation.", "2.10")
 trait Reactor[Msg >: Null] extends OutputChannel[Msg] with Combinators with InternalReactor[Msg] {
 
   // guarded by this

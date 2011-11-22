@@ -58,8 +58,56 @@ trait RichActor extends InternalReactor[Any] {
     }
   }
 
-  // TODO: build into ActorRef
+  // TODO (VJ): build into ActorRef
   protected[actors] def stop(): Nothing =
     internalExit()
+  
+    /*
+   * Following methods are copied from Actor and deprecated in order to make the transition to AKKA actors smoother.
+   */
+  import scala.actors.Actor._
+  
+  // guarded by this
+  private[actors] var exitReason: AnyRef = 'normal
+  
+  /**
+   * <p>
+   *   Terminates execution of <code>self</code> with the following
+   *   effect on linked actors:
+   * </p>
+   * <p>
+   *   For each linked actor <code>a</code> with
+   *   <code>trapExit</code> set to <code>true</code>, send message
+   *   <code>Exit(self, reason)</code> to <code>a</code>.
+   * </p>
+   * <p>
+   *   For each linked actor <code>a</code> with
+   *   <code>trapExit</code> set to <code>false</code> (default),
+   *   call <code>a.exit(reason)</code> if
+   *   <code>reason != 'normal</code>.
+   * </p>
+   */
+  @deprecated("Exists only for purposes of smooth transition to AKKA actors.", "2.10")
+  protected[actors] def exit(reason: AnyRef): Nothing = {
+    synchronized {
+      exitReason = reason
+    }
+    exit()
+  }
 
+  /**
+   * Terminates with exit reason <code>'normal</code>.
+   */
+  @deprecated("Exists only for purposes of smooth transition to AKKA actors.", "2.10")
+  protected[actors] def exit(): Nothing = {
+//    val todo = synchronized {
+//      if (!links.isEmpty)
+//        exitLinked()
+//      else
+//        () => {}
+//    }
+//    todo()
+    internalExit()
+  }
+    
 }

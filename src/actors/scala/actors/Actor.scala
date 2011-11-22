@@ -21,6 +21,7 @@ import java.util.{Timer, TimerTask}
  *
  * @author Philipp Haller
  */
+@deprecated("Extend RichActor instead. Actor will be removed from scala library and replaced with AKKA actor implementation.", "2.10")
 object Actor extends Combinators {
 
   /** State of an actor.
@@ -441,6 +442,7 @@ object Actor extends Combinators {
  * @define channel actor's mailbox
  */
 @SerialVersionUID(-781154067877019505L)
+@deprecated("Extend RichActor instead. Actor will be removed from scala library and replaced with AKKA actor implementation.", "2.10")
 trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with InputChannel[Any] with Serializable with RichActor {
 
   /* The following two fields are only used when the actor
@@ -776,48 +778,14 @@ trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with Inpu
 
   @volatile
   var trapExit = false
-  // guarded by this
-  private var exitReason: AnyRef = 'normal
+
   // guarded by this
   private[actors] var shouldExit = false
 
   /**
-   * <p>
-   *   Terminates execution of <code>self</code> with the following
-   *   effect on linked actors:
-   * </p>
-   * <p>
-   *   For each linked actor <code>a</code> with
-   *   <code>trapExit</code> set to <code>true</code>, send message
-   *   <code>Exit(self, reason)</code> to <code>a</code>.
-   * </p>
-   * <p>
-   *   For each linked actor <code>a</code> with
-   *   <code>trapExit</code> set to <code>false</code> (default),
-   *   call <code>a.exit(reason)</code> if
-   *   <code>reason != 'normal</code>.
-   * </p>
-   */
-  protected[actors] def exit(reason: AnyRef): Nothing = {
-    synchronized {
-      exitReason = reason
-    }
-    exit()
-  }
-
-  /**
    * Terminates with exit reason <code>'normal</code>.
    */
-  protected[actors] override def exit(): Nothing = {
-    val todo = synchronized {
-      if (!links.isEmpty)
-        exitLinked()
-      else
-        () => {}
-    }
-    todo()
-    super.exit()
-  }
+  protected[actors] override def exit(): Nothing = super.exit()
 
   // Assume !links.isEmpty
   // guarded by this
