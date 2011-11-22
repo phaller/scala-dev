@@ -130,9 +130,8 @@ trait Namers extends MethodSynthesis {
     )
 
     def setPrivateWithin[Sym <: Symbol](tree: Tree, sym: Sym, mods: Modifiers): Sym = {
-      if (!sym.isPrivateLocal && mods.hasAccessBoundary)
-        sym.privateWithin = typer.qualifyingClass(tree, mods.privateWithin, true)
-      sym
+      if (sym.isPrivateLocal || !mods.hasAccessBoundary) sym
+      else sym setPrivateWithin typer.qualifyingClass(tree, mods.privateWithin, true)
     }
     def setPrivateWithin(tree: MemberDef, sym: Symbol): Symbol =
       setPrivateWithin(tree, sym, tree.mods)
@@ -292,7 +291,7 @@ trait Namers extends MethodSynthesis {
      *  the flags to keep.
      */
     private def createMemberSymbol(tree: MemberDef, name: Name, mask: Long): Symbol = {
-      val pos         = tree.pos.focus
+      val pos         = tree.pos
       val isParameter = tree.mods.isParameter
       val sym         = tree match {
         case TypeDef(_, _, _, _) if isParameter     => owner.newTypeParameter(pos, name.toTypeName)
@@ -1194,10 +1193,11 @@ trait Namers extends MethodSynthesis {
               // need to be lazy, #1782
               LazyAnnotationInfo(() => typer.typedAnnotation(ann))
             }
-            if (!ainfos.isEmpty)
-              annotated.setRawAnnotations(ainfos)
-            if (annotated.isTypeSkolem)
-              annotated.deSkolemize.setRawAnnotations(ainfos)
+            if (ainfos.nonEmpty) {
+              pendingSymbolAnnotations(annotated) = ainfos
+              if (annotated.isTypeSkolem)
+                pendingSymbolAnnotations(annotated.deSkolemize) = ainfos
+            }
           case _ =>
         }
       }

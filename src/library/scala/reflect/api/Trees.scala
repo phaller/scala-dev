@@ -16,10 +16,6 @@ trait Trees /*extends reflect.generic.Trees*/ { self: Universe =>
   
   type Modifiers <: AbsModifiers
   
-  /** Hook to define what toString means on a tree
-   */
-  def show(tree: Tree): String
-  
   abstract class AbsModifiers {
     def hasModifier(mod: Modifier.Value): Boolean
     def allModifiers: Set[Modifier.Value]
@@ -496,7 +492,10 @@ trait Trees /*extends reflect.generic.Trees*/ { self: Universe =>
   }
 
   /** Explicit type application.
-  */
+   *  @PP: All signs point toward it being a requirement that args.nonEmpty,
+   *  but I can't find that explicitly stated anywhere.  Unless your last name
+   *  is odersky, you should probably treat it as true.
+   */
   case class TypeApply(fun: Tree, args: List[Tree])
        extends GenericApply {
     override def symbol: Symbol = fun.symbol

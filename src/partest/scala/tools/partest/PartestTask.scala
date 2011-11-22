@@ -207,6 +207,16 @@ class PartestTask extends Task with CompilationPathProperty {
   private def getPresentationFiles = getDirs(presentationFiles)
 
   override def execute() {
+    val opts = getProject().getProperties() get "env.PARTEST_OPTS"
+    if (opts != null && opts.toString != "")
+      opts.toString.split(" ") foreach { propDef =>
+        log("setting system property " + propDef)
+        val kv = propDef split "="
+        val key = kv(0) substring 2
+        val value = kv(1)
+        setProp(key, value)
+      }
+
     if (isPartestDebug || debug) {
       setProp("partest.debug", "true")
       nest.NestUI._verbose = true
