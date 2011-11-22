@@ -2,26 +2,40 @@ package scala.concurrent
 
 import java.util.concurrent.{Executors, Future => JFuture}
 import scala.concurrent.forkjoin._
+import scala.util.{Duration, Timeout}
 
 trait ExecutionContext {
 
   def execute(task: Runnable): Unit
+  def dispatchTask(task: () => Unit): Unit
   def newPromise[T](body: => T): Promise[T]
+  def newPromise[T](timeout: Timeout, body: => T): Promise[T] =
+    newPromise(body) // TODO add timeout
 
 }
 
-private[concurrent] class ForkJoinPromise extends DefaultPromise {
+/* The challenge is to make ForkJoinPromise inherit from RecursiveAction to avoid
+ * an object allocation per promise.
+ */
+private[concurrent] class ForkJoinPromise[T](context: ForkJoinExecutionContext, body: () => T, timeout: Long) extends DefaultPromise[T](timeout)(context) with Promise[T] {
 
-  def start(): Unit = {
-    
+  val forkJoinTask = new RecursiveAction {
+    def compute() { body() }
+  }
+
+  override def start() {
+    if (Thread.currentThread.isInstanceOf[ForkJoinWorkerThread])
+      forkJoinTask.fork()
+    else
+      context.pool execute forkJoinTask
   }
 
   // TODO FIXME: properly handle timeouts
   override def await(atMost: Duration): this.type =
     await
 
-  // TODO FIXME: implement
   override def await: this.type = {
+    forkJoinTask.join()
     this
   }
 
@@ -31,38 +45,44 @@ private[concurrent] class ForkJoinPromise extends DefaultPromise {
 private[concurrent] class ForkJoinExecutionContext extends ExecutionContext {
   val pool = new ForkJoinPool
 
-  def execute(task: Runnable) {
-    val p = newPromise(task.run())
-
+  private def executeForkJoinTask(task: RecursiveAction) {
     if (Thread.currentThread.isInstanceOf[ForkJoinWorkerThread])
-      p.start()
+      task.fork()
     else
-      pool execute p
+      pool execute task
   }
 
-  // TODO FIXME: implement
-  def newPromise[T](body: => T): Promise[T] = {
-    throw new Exception("not yet implemented")
+  def execute(task: Runnable) {
+    val action = new RecursiveAction { def compute() { task.run() } }
+    executeForkJoinTask(action)
   }
+
+  def dispatchTask(body: () => Unit) {
+    val task = new RecursiveAction { def compute() { body() } }
+    executeForkJoinTask(task)
+  }
+
+  def newPromise[T](body: => T): Promise[T] =
+    new ForkJoinPromise(this, () => body, 0L) // TODO: problematic: creates closure
 }
 
 object ExecutionContext {
 
+  
   private var _global: Option[ExecutionContext] = None
 
   def global: ExecutionContext = {
     if (_global.isEmpty) {
-      val context = new ExecutionContext {
-        def execute(task: Runnable) {
-          
-        }
-      }
+      val context = new ForkJoinExecutionContext
+      _global = Some(context)
     }
+    _global.get
   }
 
   /* a Java ExecutorService which collects executed tasks in a HashMap, so that
      they can be cancelled
    */
+/*
   def defaultWithCancellation: CancellationExecutionContext = {
     new CancellationExecutionContext {
       val executor = Executors.newCachedThreadPool()
@@ -70,6 +90,13 @@ object ExecutionContext {
       lazy val token = new CancellationToken
       
       var futures = Map[CancellationToken, List[JFuture[_]]]()
+
+      def dispatchTask(body: () => Unit) {
+        executor execute (new Runnable { def run() = body() })
+      }
+
+      def newPromise[T](body: => T): Promise[T] =
+        
 
       def execute(task: Runnable) {
         executor execute task
@@ -98,5 +125,5 @@ object ExecutionContext {
       }
     }
   }
-
+*/
 }

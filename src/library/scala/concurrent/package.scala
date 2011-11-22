@@ -17,9 +17,7 @@ package scala
  */
 package object concurrent {
 
-  type Timeout = Long // TODO FIXME: integrate Timeout from Akka
-
-  type MessageDispatcher = FutureTaskRunner // TODO FIXME: change futures to use execution context
+  type MessageDispatcher = ExecutionContext // TODO FIXME: change futures to use execution context
 
   /** Performs a call which can potentially block execution.
    *  

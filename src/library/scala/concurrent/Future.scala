@@ -7,7 +7,7 @@ package scala.concurrent
 
 //import akka.AkkaException (replaced with Exception)
 //import akka.event.Logging.Error (removed all logging)
-//import akka.actor.Timeout (added type alias in package object)
+import scala.util.Timeout
 import scala.Option
 //import akka.japi.{ Procedure, Function ⇒ JFunc, Option ⇒ JOption } (commented methods)
 
@@ -180,7 +180,8 @@ object Future {
    * The execution is performed by the specified Dispatcher.
    */
   def apply[T](body: ⇒ T)(implicit dispatcher: MessageDispatcher, timeout: Timeout): Future[T] = {
-    val promise = new DefaultPromise[T](timeout)
+    val promise: Promise[T] = new DefaultPromise[T](timeout)
+
     dispatcher dispatchTask { () ⇒
       promise complete {
         try {
@@ -190,6 +191,7 @@ object Future {
         }
       }
     }
+
     promise
   }
 
@@ -306,9 +308,10 @@ object Future {
     }
   }
 */
+/*
   def fold[T, R](futures: Iterable[Future[T]], timeout: Timeout)(zero: R)(foldFun: (R, T) ⇒ R)(implicit dispatcher: MessageDispatcher): Future[R] =
     fold(futures)(zero)(foldFun)(dispatcher, timeout)
-
+*/
   /**
    * Initiates a fold over the supplied futures where the fold-zero is the result value of the Future that's completed first
    * Example:
@@ -316,6 +319,7 @@ object Future {
    *   val result = Futures.reduce(futures)(_ + _).await.result
    * </pre>
    */
+/*
   def reduce[T, R >: T](futures: Iterable[Future[T]])(op: (R, T) ⇒ T)(implicit dispatcher: MessageDispatcher, timeout: Timeout): Future[R] = {
     if (futures.isEmpty)
       new KeptPromise[R](Left(new UnsupportedOperationException("empty reduce left")))
@@ -334,10 +338,11 @@ object Future {
       result
     }
   }
-
+*/
+/*
   def reduce[T, R >: T](futures: Iterable[Future[T]], timeout: Timeout)(op: (R, T) ⇒ T)(implicit dispatcher: MessageDispatcher): Future[R] =
     reduce(futures)(op)(dispatcher, timeout)
-
+*/
   /**
    * Transforms a Traversable[A] into a Future[Traversable[B]] using the provided Function A ⇒ Future[B].
    * This is useful for performing a parallel map. For example, to apply a function to all items of a list
@@ -423,7 +428,7 @@ object Future {
     override def initialValue = None
   }
 
-  private[akka] def dispatchTask(task: () ⇒ Unit, force: Boolean = false)(implicit dispatcher: MessageDispatcher): Unit =
+  /*private[akka]*/ def dispatchTask(task: () ⇒ Unit, force: Boolean = false)(implicit dispatcher: MessageDispatcher): Unit =
     _taskStack.get match {
       case Some(taskStack) if !force ⇒ taskStack push task
       case _ ⇒
@@ -879,6 +884,10 @@ class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDi
 
   private val _startTimeInNanos = currentTimeInNanos
 
+  def start() {
+    // do nothing
+  }
+
   @tailrec
   private def awaitUnsafe(waitTimeNanos: Long): Boolean = {
     if (value.isEmpty && waitTimeNanos > 0) {
@@ -985,13 +994,18 @@ class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDi
           val runnable = new Runnable {
             def run() {
               if (!isCompleted) {
-                if (!isExpired) dispatcher.prerequisites.scheduler.scheduleOnce(this, timeLeftNoinline(), NANOS)
-                else func(DefaultPromise.this)
+                if (!isExpired) {
+                  // TODO FIXME: add scheduler
+                  //dispatcher.prerequisites.scheduler.scheduleOnce(this, timeLeftNoinline(), NANOS)
+                } else func(DefaultPromise.this)
               }
             }
           }
+          /*
+          TODO FIXME: add scheduler
           val timeoutFuture = dispatcher.prerequisites.scheduler.scheduleOnce(runnable, timeLeft(), NANOS)
           onComplete(_ ⇒ timeoutFuture.cancel())
+          */
           false
         } else true
       } else false
@@ -1012,12 +1026,15 @@ class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDi
           val runnable = new Runnable {
             def run() {
               if (!isCompleted) {
-                if (!isExpired) dispatcher.prerequisites.scheduler.scheduleOnce(this, timeLeftNoinline(), NANOS)
-                else promise complete (try { Right(fallback) } catch { case e ⇒ Left(e) })
+                if (!isExpired) {
+                  // TODO FIXME add scheduler
+                  //dispatcher.prerequisites.scheduler.scheduleOnce(this, timeLeftNoinline(), NANOS)
+                } else promise complete (try { Right(fallback) } catch { case e ⇒ Left(e) })
               }
             }
           }
-          dispatcher.prerequisites.scheduler.scheduleOnce(runnable, timeLeft(), NANOS)
+          // TODO FIXME add
+          //dispatcher.prerequisites.scheduler.scheduleOnce(runnable, timeLeft(), NANOS)
           promise
       }
     } else this
@@ -1041,6 +1058,8 @@ class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDi
  */
 sealed class KeptPromise[T](suppliedValue: Either[Throwable, T])(implicit val dispatcher: MessageDispatcher) extends Promise[T] {
   val value = Some(suppliedValue)
+
+  def start() { /* do nothing */ }
 
   def complete(value: Either[Throwable, T]): this.type = this
   def onComplete(func: Future[T] ⇒ Unit): this.type = {
