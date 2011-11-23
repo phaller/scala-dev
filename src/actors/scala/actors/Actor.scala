@@ -728,56 +728,6 @@ trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with Inpu
       super.getState
   }
 
-  // guarded by this
-  private[actors] var links: List[AbstractActor] = Nil
-
-  /**
-   * Links <code>self</code> to actor <code>to</code>.
-   *
-   * @param to the actor to link to
-   * @return   the parameter actor
-   */
-  def link(to: AbstractActor): AbstractActor = {
-    assert(Actor.self(scheduler) == this, "link called on actor different from self")
-    this linkTo to
-    to linkTo this
-    to
-  }
-
-  /**
-   * Links <code>self</code> to the actor defined by <code>body</code>.
-   *
-   * @param body the body of the actor to link to
-   * @return     the parameter actor
-   */
-  def link(body: => Unit): Actor = {
-    assert(Actor.self(scheduler) == this, "link called on actor different from self")
-    val a = new Actor {
-      def act() = body
-      override final val scheduler: IScheduler = Actor.this.scheduler
-    }
-    link(a)
-    a.start()
-    a
-  }
-
-  private[actors] def linkTo(to: AbstractActor) = synchronized {
-    links = to :: links
-  }
-
-  /**
-   * Unlinks <code>self</code> from actor <code>from</code>.
-   */
-  def unlink(from: AbstractActor) {
-    assert(Actor.self(scheduler) == this, "unlink called on actor different from self")
-    this unlinkFrom from
-    from unlinkFrom this
-  }
-
-  private[actors] def unlinkFrom(from: AbstractActor) = synchronized {
-    links = links.filterNot(from.==)
-  }
-
   @volatile
   var trapExit = false
 
@@ -789,35 +739,11 @@ trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with Inpu
    */
   protected[actors] override def exit(): Nothing = super.exit()
 
-  // Assume !links.isEmpty
-  // guarded by this
-  private[actors] def exitLinked(): () => Unit = {
-    _state = Actor.State.Terminated
+  private[actors] override def beforeExitLinked() {
+	_state = Actor.State.Terminated
     // reset waitingFor, otherwise getState returns Suspended
     waitingFor = Reactor.waitingForNone
-    // remove this from links
-    val mylinks = links.filterNot(this.==)
-    // unlink actors
-    mylinks.foreach(unlinkFrom(_))
-    // return closure that locks linked actors
-    () => {
-      mylinks.foreach((linked: AbstractActor) => {
-        linked.synchronized {
-          if (!linked.exiting) {
-            linked.unlinkFrom(this)
-            linked.exit(this, exitReason)
-          }
-        }
-      })
-    }
-  }
-
-  // Assume !links.isEmpty
-  // guarded by this
-  private[actors] def exitLinked(reason: AnyRef): () => Unit = {
-    exitReason = reason
-    exitLinked()
-  }
+  }     
 
   // Assume !this.exiting
   private[actors] def exit(from: AbstractActor, reason: AnyRef) {

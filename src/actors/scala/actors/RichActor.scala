@@ -2,7 +2,7 @@ package scala.actors
 
 import scala.util.continuations._
 
-trait RichActor extends InternalReactor[Any] {
+trait RichActor extends AbstractActor with InternalReactor[Any] {
 
   private[actors] def isActor = false
 
@@ -100,13 +100,13 @@ trait RichActor extends InternalReactor[Any] {
    */
   @deprecated("Exists only for purposes of smooth transition to AKKA actors.", "2.10")
   protected[actors] def exit(): Nothing = {
-//    val todo = synchronized {
-//      if (!links.isEmpty)
-//        exitLinked()
-//      else
-//        () => {}
-//    }
-//    todo()
+    val todo = synchronized {
+      if (!links.isEmpty)
+        exitLinked()
+      else
+        () => {}
+    }
+    todo()
     internalExit()
   }
   
@@ -114,4 +114,87 @@ trait RichActor extends InternalReactor[Any] {
   protected[actors] def mailboxSize: Int =
     mailbox.size
   
+      // guarded by this
+  private[actors] var links: List[AbstractActor] = Nil
+    
+  /**
+   * Links <code>self</code> to actor <code>to</code>.
+   *
+   * @param to the actor to link to
+   * @return   the parameter actor
+   */
+  @deprecated("Exists only for purposes of smooth transition to AKKA actors.", "2.10")
+  def link(to: AbstractActor): AbstractActor = {
+    assert(Actor.self(scheduler) == this, "link called on actor different from self")
+    this linkTo to
+    to linkTo this
+    to
+  }  
+  
+  /**
+   * Links <code>self</code> to the actor defined by <code>body</code>.
+   *
+   * @param body the body of the actor to link to
+   * @return     the parameter actor
+   */
+  @deprecated("Exists only for purposes of smooth transition to AKKA actors.", "2.10")
+  def link(body: => Unit): Actor = {
+    assert(Actor.self(scheduler) == this, "link called on actor different from self")
+    val a = new Actor {
+      def act() = body
+      override final val scheduler: IScheduler = RichActor.this.scheduler
+    }
+    link(a)
+    a.start()
+    a
+  }
+  
+  private[actors] def linkTo(to: AbstractActor) = synchronized {
+    links = to :: links
+  }
+
+  /**
+   * Unlinks <code>self</code> from actor <code>from</code>.
+   */
+  @deprecated("Exists only for purposes of smooth transition to AKKA actors.", "2.10")
+  def unlink(from: AbstractActor) {
+    assert(Actor.self(scheduler) == this, "unlink called on actor different from self")
+    this unlinkFrom from
+    from unlinkFrom this
+  }
+
+  private[actors] def unlinkFrom(from: AbstractActor) = synchronized {
+    links = links.filterNot(from.==)
+  }
+  
+  private[actors] def beforeExitLinked() = {}
+  
+  // Assume !links.isEmpty
+  // guarded by this
+  private[actors] def exitLinked(): () => Unit = { 
+    beforeExitLinked()    
+    // remove this from links
+    val mylinks = links.filterNot(this.==)
+    // unlink actors
+    mylinks.foreach(unlinkFrom(_))
+    // return closure that locks linked actors
+    () => {
+      mylinks.foreach((linked: AbstractActor) => {
+        linked.synchronized {
+          if (!linked.exiting) {
+            linked.unlinkFrom(this)
+            linked.exit(this, exitReason)
+          }
+        }
+      })
+    }
+  }
+  
+  // Assume !links.isEmpty
+  // guarded by this
+  private[actors] def exitLinked(reason: AnyRef): () => Unit = {
+    exitReason = reason
+    exitLinked()
+  }
+   
 }
