@@ -655,6 +655,8 @@ trait Actor extends AbstractActor with ReplyReactor with ActorCanReply with Inpu
     case x => x
   }
 
+  protected[actors] override def mailboxSize: Int = super.mailboxSize    
+  
   // guarded by lock of this
   // never throws SuspendActorControl
   private[actors] override def scheduleActor(f: PartialFunction[Any, Any], msg: Any) =

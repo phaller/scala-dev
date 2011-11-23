@@ -109,5 +109,9 @@ trait RichActor extends InternalReactor[Any] {
 //    todo()
     internalExit()
   }
-    
+  
+  @deprecated("Exists only for purposes of smooth transition to AKKA actors.", "2.10") 
+  protected[actors] def mailboxSize: Int =
+    mailbox.size
+  
 }
