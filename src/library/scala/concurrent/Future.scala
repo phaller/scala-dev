@@ -7,7 +7,7 @@ package scala.concurrent
 
 //import akka.AkkaException (replaced with Exception)
 //import akka.event.Logging.Error (removed all logging)
-import scala.util.Timeout
+import scala.util.{ Timeout, Duration }
 import scala.Option
 //import akka.japi.{ Procedure, Function ⇒ JFunc, Option ⇒ JOption } (commented methods)
 
@@ -15,14 +15,13 @@ import scala.util.continuations._
 
 import java.util.concurrent.{ ConcurrentLinkedQueue, TimeUnit, Callable }
 import java.util.concurrent.TimeUnit.{ NANOSECONDS ⇒ NANOS, MILLISECONDS ⇒ MILLIS }
-//import java.lang.{ Iterable ⇒ JIterable } (commented methods)
-//import java.util.{ LinkedList ⇒ JLinkedList } (commented methods)
+import java.lang.{ Iterable ⇒ JIterable }
+import java.util.{ LinkedList ⇒ JLinkedList }
 
 import scala.annotation.tailrec
 import scala.collection.mutable.Stack
 //import akka.util.Switch (commented method)
 import java.{ lang ⇒ jl }
-import scala.util.Duration
 import java.util.concurrent.atomic.{ AtomicReferenceFieldUpdater, AtomicInteger, AtomicBoolean }
 
 object BoxedType {
@@ -100,16 +99,17 @@ class FutureFactory(dispatcher: MessageDispatcher, timeout: Timeout) {
   }
 
   def find[T <: AnyRef](futures: JIterable[Future[T]], predicate: JFunc[T, java.lang.Boolean]): Future[JOption[T]] = find(futures, predicate, timeout)
-
+*/
   /**
    * Java API.
    * Returns a Future to the result of the first future in the list that is completed
    */
+/*
   def firstCompletedOf[T <: AnyRef](futures: JIterable[Future[T]], timeout: Timeout): Future[T] =
     Future.firstCompletedOf(scala.collection.JavaConversions.iterableAsScalaIterable(futures), timeout)
 
   def firstCompletedOf[T <: AnyRef](futures: JIterable[Future[T]]): Future[T] = firstCompletedOf(futures, timeout)
-
+*/
   /**
    * Java API
    * A non-blocking fold over the specified futures.
@@ -117,6 +117,7 @@ class FutureFactory(dispatcher: MessageDispatcher, timeout: Timeout) {
    * the result will be the first failure of any of the futures, or any failure in the actual fold,
    * or the result of the fold.
    */
+/*
   def fold[T <: AnyRef, R <: AnyRef](zero: R, timeout: Timeout, futures: java.lang.Iterable[Future[T]], fun: akka.japi.Function2[R, T, R]): Future[R] =
     Future.fold(scala.collection.JavaConversions.iterableAsScalaIterable(futures), timeout)(zero)(fun.apply _)
 
@@ -180,7 +181,7 @@ object Future {
    * The execution is performed by the specified Dispatcher.
    */
   def apply[T](body: ⇒ T)(implicit dispatcher: MessageDispatcher, timeout: Timeout): Future[T] = {
-    val promise: Promise[T] = new DefaultPromise[T](timeout)
+    val promise: Promise[T] = DefaultPromise[T](timeout)
 
     dispatcher dispatchTask { () ⇒
       promise complete {
@@ -221,7 +222,7 @@ object Future {
    * Returns a Future to the result of the first future in the list that is completed
    */
   def firstCompletedOf[T](futures: Iterable[Future[T]])(implicit dispatcher: MessageDispatcher, timeout: Timeout): Future[T] = {
-    val futureResult = new DefaultPromise[T](timeout)
+    val futureResult = DefaultPromise[T](timeout)
 
     val completeFirst: Future[T] ⇒ Unit = _.value.foreach(futureResult complete _)
     futures.foreach(_ onComplete completeFirst)
@@ -238,7 +239,7 @@ object Future {
   def find[T](futures: Iterable[Future[T]])(predicate: T ⇒ Boolean)(implicit dispatcher: MessageDispatcher, timeout: Timeout): Future[Option[T]] = {
     if (futures.isEmpty) new KeptPromise[Option[T]](Right(None))
     else {
-      val result = new DefaultPromise[Option[T]](timeout)
+      val result = DefaultPromise[Option[T]](timeout)
       val ref = new AtomicInteger(futures.size)
       val search: Future[T] ⇒ Unit = f ⇒ try {
         f.result.filter(predicate).foreach(r ⇒ result completeWithResult Some(r))
@@ -270,7 +271,7 @@ object Future {
     if (futures.isEmpty) {
       new KeptPromise[R](Right(zero))
     } else {
-      val result = new DefaultPromise[R](timeout)
+      val result = DefaultPromise[R](timeout)
       val results = new ConcurrentLinkedQueue[T]()
       val done = new Switch(false)
       val allDone = futures.size
@@ -324,7 +325,7 @@ object Future {
     if (futures.isEmpty)
       new KeptPromise[R](Left(new UnsupportedOperationException("empty reduce left")))
     else {
-      val result = new DefaultPromise[R](timeout)
+      val result = DefaultPromise[R](timeout)
       val seedFound = new AtomicBoolean(false)
       val seedFold: Future[T] ⇒ Unit = f ⇒ {
         if (seedFound.compareAndSet(false, true)) { //Only the first completed should trigger the fold
@@ -428,7 +429,7 @@ object Future {
     override def initialValue = None
   }
 
-  /*private[akka]*/ def dispatchTask(task: () ⇒ Unit, force: Boolean = false)(implicit dispatcher: MessageDispatcher): Unit =
+  private[concurrent] def dispatchTask(task: () ⇒ Unit, force: Boolean = false)(implicit dispatcher: MessageDispatcher): Unit =
     _taskStack.get match {
       case Some(taskStack) if !force ⇒ taskStack push task
       case _ ⇒
@@ -469,7 +470,7 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
    *
    * throws FutureTimeoutException if this Future times out when waiting for completion
    */
-  def get: T = this.await.resultOrException.get
+  def force: T = this.await.resultOrException.get
 
   /**
    * Blocks the current thread until the Future has been completed or the
@@ -628,7 +629,7 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
    * </pre>
    */
   final def recover[A >: T](pf: PartialFunction[Throwable, A])(implicit timeout: Timeout): Future[A] = {
-    val future = new DefaultPromise[A](timeout)
+    val future = DefaultPromise[A](timeout)
     onComplete {
       _.value.get match {
         case Left(e) if pf isDefinedAt e ⇒ future.complete(try { Right(pf(e)) } catch { case x: Exception ⇒ Left(x) })
@@ -652,7 +653,7 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
    * </pre>
    */
   final def map[A](f: T ⇒ A)(implicit timeout: Timeout): Future[A] = {
-    val future = new DefaultPromise[A](timeout)
+    val future = DefaultPromise[A](timeout)
     onComplete {
       _.value.get match {
         case l: Left[_, _] ⇒ future complete l.asInstanceOf[Either[Throwable, A]]
@@ -674,7 +675,7 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
    * that conforms to A's erased type or a ClassCastException otherwise.
    */
   final def mapTo[A](implicit m: Manifest[A], timeout: Timeout = this.timeout): Future[A] = {
-    val fa = new DefaultPromise[A](timeout)
+    val fa = DefaultPromise[A](timeout)
     onComplete { ft ⇒
       fa complete (ft.value.get match {
         case l: Left[_, _] ⇒ l.asInstanceOf[Either[Throwable, A]]
@@ -704,7 +705,7 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
    * </pre>
    */
   final def flatMap[A](f: T ⇒ Future[A])(implicit timeout: Timeout): Future[A] = {
-    val future = new DefaultPromise[A](timeout)
+    val future = DefaultPromise[A](timeout)
 
     onComplete {
       _.value.get match {
@@ -738,7 +739,7 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
   }
 
   final def filter(p: T ⇒ Boolean)(implicit timeout: Timeout): Future[T] = {
-    val future = new DefaultPromise[T](timeout)
+    val future = DefaultPromise[T](timeout)
     onComplete {
       _.value.get match {
         case l: Left[_, _] ⇒ future complete l.asInstanceOf[Either[Throwable, T]]
@@ -769,7 +770,7 @@ object Promise {
   /**
    * Creates a non-completed, new, Promise with the supplied timeout in milliseconds
    */
-  def apply[A](timeout: Timeout)(implicit dispatcher: MessageDispatcher): Promise[A] = new DefaultPromise[A](timeout)
+  def apply[A](timeout: Timeout)(implicit dispatcher: MessageDispatcher): Promise[A] = DefaultPromise[A](timeout)
 
   /**
    * Creates a non-completed, new, Promise with the default timeout (akka.actor.timeout in conf)
@@ -815,7 +816,7 @@ trait Promise[T] extends Future[T] {
   final def <<(value: T): Future[T] @cps[Future[Any]] = shift { cont: (Future[T] ⇒ Future[Any]) ⇒ cont(complete(Right(value))) }
 
   final def <<(other: Future[T]): Future[T] @cps[Future[Any]] = shift { cont: (Future[T] ⇒ Future[Any]) ⇒
-    val fr = new DefaultPromise[Any](this.timeout)
+    val fr = DefaultPromise[Any](this.timeout)
     this completeWith other onComplete { f ⇒
       try {
         fr completeWith cont(f)
@@ -829,7 +830,7 @@ trait Promise[T] extends Future[T] {
   }
 
   final def <<(stream: PromiseStreamOut[T]): Future[T] @cps[Future[Any]] = shift { cont: (Future[T] ⇒ Future[Any]) ⇒
-    val fr = new DefaultPromise[Any](this.timeout)
+    val fr = DefaultPromise[Any](this.timeout)
     stream.dequeue(this).onComplete { f ⇒
       try {
         fr completeWith cont(f)
@@ -844,43 +845,50 @@ trait Promise[T] extends Future[T] {
 */
 }
 
+/**
+ * Represents the internal state of the DefaultCompletableFuture
+ */
+sealed abstract class FState[+T] { def value: Option[Either[Throwable, T]] }
+case class Pending[T](listeners: List[Future[T] ⇒ Unit] = Nil) extends FState[T] {
+  def value: Option[Either[Throwable, T]] = None
+}
+case class Success[T](value: Option[Either[Throwable, T]] = None) extends FState[T] {
+  def result: T = value.get.right.get
+}
+case class Failure[T](value: Option[Either[Throwable, T]] = None) extends FState[T] {
+  def exception: Throwable = value.get.left.get
+}
+case object Expired extends FState[Nothing] {
+  def value: Option[Either[Throwable, Nothing]] = None
+}
+
 //Companion object to FState, just to provide a cheap, immutable default entry
-private[concurrent] object DefaultPromise {
+private[concurrent] object FState {
   def EmptyPending[T](): FState[T] = emptyPendingValue.asInstanceOf[FState[T]]
-
-  /**
-   * Represents the internal state of the DefaultCompletableFuture
-   */
-
-  sealed trait FState[+T] { def value: Option[Either[Throwable, T]] }
-  case class Pending[T](listeners: List[Future[T] ⇒ Unit] = Nil) extends FState[T] {
-    def value: Option[Either[Throwable, T]] = None
-  }
-  case class Success[T](value: Option[Either[Throwable, T]] = None) extends FState[T] {
-    def result: T = value.get.right.get
-  }
-  case class Failure[T](value: Option[Either[Throwable, T]] = None) extends FState[T] {
-    def exception: Throwable = value.get.left.get
-  }
-  case object Expired extends FState[Nothing] {
-    def value: Option[Either[Throwable, Nothing]] = None
-  }
   private val emptyPendingValue = Pending[Nothing](Nil)
+}
+
+private[concurrent] object DefaultPromise {
+  def apply[T](within: Timeout)(implicit disp: MessageDispatcher): Promise[T] = new DefaultPromise[T] {
+    val timeout = within
+    implicit val dispatcher = disp
+  }
+
+  def apply[T]()(implicit dispatcher: MessageDispatcher, timeout: Timeout): Promise[T] = apply(timeout)
+
+  def apply[T](timeout: Long)(implicit dispatcher: MessageDispatcher): Promise[T] = apply(Timeout(timeout))
+
+  def apply[T](timeout: Long, timeunit: TimeUnit)(implicit dispatcher: MessageDispatcher): Promise[T] = apply(Timeout(timeout, timeunit))
 }
 
 /**
  * The default concrete Future implementation.
  */
-class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDispatcher) extends AbstractPromise with Promise[T] {
+trait DefaultPromise[T] extends AbstractPromise with Promise[T] {
   self ⇒
 
-  import DefaultPromise.{ FState, Success, Failure, Pending, Expired }
-
-  def this()(implicit dispatcher: MessageDispatcher, timeout: Timeout) = this(timeout)
-
-  def this(timeout: Long)(implicit dispatcher: MessageDispatcher) = this(Timeout(timeout))
-
-  def this(timeout: Long, timeunit: TimeUnit)(implicit dispatcher: MessageDispatcher) = this(Timeout(timeout, timeunit))
+  val timeout: Timeout
+  implicit val dispatcher: MessageDispatcher
 
   private val _startTimeInNanos = currentTimeInNanos
 
@@ -1021,7 +1029,7 @@ class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDi
         case _: Success[_] | _: Failure[_] ⇒ this
         case Expired                       ⇒ Future[A](fallback, timeout)
         case _: Pending[_] ⇒
-          val promise = new DefaultPromise[A](Timeout.never) //TODO FIXME We can't have infinite timeout here, doesn't make sense.
+          val promise = DefaultPromise[A](Timeout.never) //TODO FIXME We can't have infinite timeout here, doesn't make sense.
           promise completeWith this
           val runnable = new Runnable {
             def run() {
