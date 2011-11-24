@@ -783,7 +783,7 @@ object Promise {
  */
 trait Promise[T] extends Future[T] {
 
-  def start(): Unit
+  def start() { /* do nothing */ }
 
   /**
    * Completes this Future with the specified result, if not already completed.
@@ -891,10 +891,6 @@ trait DefaultPromise[T] extends AbstractPromise with Promise[T] {
   implicit val dispatcher: MessageDispatcher
 
   private val _startTimeInNanos = currentTimeInNanos
-
-  def start() {
-    // do nothing
-  }
 
   @tailrec
   private def awaitUnsafe(waitTimeNanos: Long): Boolean = {
@@ -1066,8 +1062,6 @@ trait DefaultPromise[T] extends AbstractPromise with Promise[T] {
  */
 sealed class KeptPromise[T](suppliedValue: Either[Throwable, T])(implicit val dispatcher: MessageDispatcher) extends Promise[T] {
   val value = Some(suppliedValue)
-
-  def start() { /* do nothing */ }
 
   def complete(value: Either[Throwable, T]): this.type = this
   def onComplete(func: Future[T] ⇒ Unit): this.type = {
