@@ -785,6 +785,8 @@ trait Promise[T] extends Future[T] {
 
   def start() { /* do nothing */ }
 
+  def tryCancel() { /* do nothing */ }
+
   /**
    * Completes this Future with the specified result, if not already completed.
    * @return this

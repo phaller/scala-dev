@@ -25,14 +25,11 @@ private[concurrent] class ForkJoinPromise[T](context: ForkJoinExecutionContext, 
   implicit val dispatcher = context
 
   // body of RecursiveAction
-  override def compute() { body() }
+  override def compute(): Unit =
+    body()
 
-  override def start() {
-    if (Thread.currentThread.isInstanceOf[ForkJoinWorkerThread])
-      this.fork()
-    else
-      context.pool execute this
-  }
+  override def start(): Unit =
+    fork()
 
   // TODO FIXME: handle timeouts
   override def await(atMost: Duration): this.type =
@@ -43,7 +40,8 @@ private[concurrent] class ForkJoinPromise[T](context: ForkJoinExecutionContext, 
     this
   }
 
-  // TODO FIXME: add def tryCancel
+  override def tryCancel(): Unit =
+    tryUnfork()
 }
 
 private[concurrent] final class ForkJoinExecutionContext extends ExecutionContext {
