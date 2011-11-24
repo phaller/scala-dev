@@ -50,11 +50,9 @@ private[actors] trait ActorCanReply extends ReactorCanReply {
         def receiver =
           ftch.receiver
       })
-      reset {
-        ftch.react {
-          case any => res.set(any)
-        }
-      }
+      ftch.react {
+        case any => res.set(any)
+      }      
     }
     val a = new FutureActor[A](fun, c)
     a.start()

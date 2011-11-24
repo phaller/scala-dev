@@ -58,7 +58,7 @@ trait InputChannel[+Msg] {
    * @param  msec the time span before timeout
    * @param  f    a partial function with message patterns and actions
    */
-  def reactWithin(msec: Long)(f: PartialFunction[Any, Unit]): Nothing
+  def reactWithin(msec: Long)(f: PartialFunction[Any, Unit]): Unit@suspendable
 
   /**
    * Receives the next message from this $channel.

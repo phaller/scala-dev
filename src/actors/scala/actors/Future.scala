@@ -53,7 +53,7 @@ abstract class Future[+T] extends Responder[T] with Function0[T] {
 
 private case object Eval
 
-private class FutureActor[T](fun: SyncVar[T] => Unit, channel: Channel[T]) extends Future[T] with DaemonActor {
+private class FutureActor[T](fun: SyncVar[T] => Unit @suspendable, channel: Channel[T]) extends Future[T] with DaemonActor {
 
   var enableChannel = false // guarded by this
 
@@ -96,23 +96,19 @@ private class FutureActor[T](fun: SyncVar[T] => Unit, channel: Channel[T]) exten
     looping()
   }
 
-  def act() {
-    val res = new SyncVar[T]
-
-    {
+  def act() {    
+    reset {
+      val res = new SyncVar[T]
       fun(res)
-    } andThen {
 
       synchronized {
         val v = res.get
-        fvalue =  Some(v)
+        fvalue = Some(v)
         if (enableChannel)
           channel ! v
       }
 
-      reset {
-        looping()
-      }
+      looping()
     }
   }
 }

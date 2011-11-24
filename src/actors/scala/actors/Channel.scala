@@ -82,7 +82,7 @@ class Channel[Msg](val receiver: Actor) extends InputChannel[Msg] with OutputCha
     }
   }
 
-  def reactWithin(msec: Long)(f: PartialFunction[Any, Unit]): Nothing = {
+  def reactWithin(msec: Long)(f: PartialFunction[Any, Unit]): Unit @suspendable = {
     val C = this.asInstanceOf[Channel[Any]]
     receiver.reactWithin(msec) {
       case C ! msg if (f.isDefinedAt(msg)) => f(msg)
@@ -120,12 +120,10 @@ class Channel[Msg](val receiver: Actor) extends InputChannel[Msg] with OutputCha
           ftch.forward(handler(msg))
         def receiver =
           ftch.receiver
-      })
-      reset {
+      })      
         ftch.react {
           case any => res.set(any)
-        }
-      }
+        }      
     }
     val a = new FutureActor[A](fun, c)
     a.start()

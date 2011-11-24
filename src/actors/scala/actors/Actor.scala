@@ -252,7 +252,7 @@ object Actor extends Combinators {
    * @param  f    a partial function specifying patterns and actions
    * @return      this function never returns
    */
-  def reactWithin(msec: Long)(f: PartialFunction[Any, Unit]): Nothing =
+  def reactWithin(msec: Long)(f: PartialFunction[Any, Unit]): Unit @suspendable =
     self.reactWithin(msec)(f)
 
   def eventloop(f: PartialFunction[Any, Unit]): /*Nothing*/Unit @suspendable =
@@ -319,7 +319,7 @@ object Actor extends Combinators {
 
   implicit def mkBody[a](body: => a) = new Body[a] {
     def andThen[b](other: => b): Unit = rawSelf.seq(body, other)
-  }
+  }    
 
   /**
    * Links <code>self</code> to actor <code>to</code>.

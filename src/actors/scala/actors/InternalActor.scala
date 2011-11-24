@@ -198,7 +198,7 @@ private[actors] trait InternalActor extends AbstractActor with ReplyReactor with
   }
 
   /** See the companion object's `reactWithin` method. */
-  override def reactWithin(msec: Long)(handler: PartialFunction[Any, Unit]): Nothing = {
+  override def reactWithin(msec: Long)(handler: PartialFunction[Any, Unit]): Unit @suspendable = {
     synchronized {
       if (shouldExit) exit()
     }
