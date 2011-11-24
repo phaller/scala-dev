@@ -13,7 +13,7 @@ package scala.actors
 /** 
  *  @author Philipp Haller
  */
-private[actors] class ActorTask(actor: Actor,
+private[actors] class ActorTask(actor: InternalActor,
                                 fun: () => Unit,
                                 handler: PartialFunction[Any, Any],
                                 msg: Any)
