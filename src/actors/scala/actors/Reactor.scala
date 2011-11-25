@@ -215,11 +215,16 @@ trait Reactor[Msg >: Null] extends OutputChannel[Msg] with Combinators {
     scheduler executeFromActor makeReaction(null, handler, msg)
   }
 
+  private[actors] def preAct() = {}
+  
   // guarded by this
   private[actors] def dostart() {
     _state = Actor.State.Runnable
     scheduler newActor this
-    scheduler execute makeReaction(() => act(), null, null)
+    scheduler execute makeReaction(() => {
+      preAct()
+      act()
+    }, null, null)
   }
 
   /**

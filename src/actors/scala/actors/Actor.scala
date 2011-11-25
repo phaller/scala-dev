@@ -442,20 +442,7 @@ object Actor extends Combinators {
  */
 @SerialVersionUID(-781154067877019505L)
 trait Actor extends InternalActor {
-     
-  /** See the companion object's `receive` method. */
-//  def receive[R](f: PartialFunction[Any, R]): R = 
-  
-  /** See the companion object's `receiveWithin` method. */
-//  def receiveWithin[R](msec: Long)(f: PartialFunction[Any, R]): R = 
-  
-  /** See the companion object's `react` method. */
-//  override def react(handler: PartialFunction[Any, Unit]): /*Nothing*/Unit @suspendable = 
-
-  /** See the companion object's `reactWithin` method. */
-//  override def reactWithin(msec: Long)(handler: PartialFunction[Any, Unit]): Nothing = {
-    
-
+       
   override def start(): Actor = synchronized {
     super.start()
     this

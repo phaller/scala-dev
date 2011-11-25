@@ -38,13 +38,16 @@ private[actors] class ActorTask(actor: InternalActor,
                                      e)
 
     val todo = actor.synchronized {
-      if (!actor.links.isEmpty)
+      val res = if (!actor.links.isEmpty)
         actor.exitLinked(uncaught)
       else {
         super.terminateExecution(e)
         () => {}
       }
+      actor.internalPostStop
+      res
     }
+    
     todo()
   }
 

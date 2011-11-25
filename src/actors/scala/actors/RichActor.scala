@@ -6,6 +6,11 @@ import scala.collection._
 trait RichActor extends InternalActor {
   type Receive = PartialFunction[Any, Unit @suspendable]
   
+  creationCheck;
+  
+  // TODO (VJ)
+  def self: ActorRef = null
+  
   def receiveTimeout: Option[Long] 
   
   /**
@@ -54,11 +59,30 @@ trait RichActor extends InternalActor {
     // never unbecome the initial behavior
     if (behaviorStack.size > 1)
       behaviorStack = behaviorStack.pop
-  }  
-  
+  }
+
   /**
+   * User overridable callback.
+   * <p/>
+   * Is called when a message isn't handled by the current behavior of the actor
+   * by default it does: EventHandler.warning(self, message)
+   */
+  def unhandled(message: Any) {
+    message match {
+      // TODO(VJ) introduce self that returns ActorRef
+      case _ => throw new UnhandledMessageException(message, null) /* self */
+    }
+  }
+  
+  /*
    * Deprecated part of the API. Used only for smoother transition between scala and akka actors
    */
+  
+  @deprecated("use self.reply instead")
+  protected[actors] override def reply(msg: Any) = super.reply(msg)
+      
+  @deprecated("use self.forward instead")
+  override def forward(msg: Any) = super.forward(msg)
   
   @deprecated("use handle method")
   override def reactWithin(msec: Long)(handler: PartialFunction[Any, Unit]): Unit @suspendable = 
@@ -69,28 +93,30 @@ trait RichActor extends InternalActor {
   
   @deprecated("use preRestart")
   protected[actors] override def exceptionHandler: PartialFunction[Exception, Unit] = {
-    case e => preRestart(e, None)
+    case e => preRestart(e, None) // TODO (VJ) this is not correct. What is the alternative? 
   }   
  
   @deprecated("there will be no replacement in akka")
   protected[actors] override def scheduler: IScheduler = super.scheduler
      
   @deprecated("there will be no replacement in akka")
-  protected[actors] def mailboxSize: Int = super.mailboxSize
+  protected[actors] override def mailboxSize: Int = super.mailboxSize
   
   @deprecated("there will be no replacement in akka")
   override def getState: Actor.State.Value = super.getState
-
-  // TODO (VJ) we need to call preStop in all places where the actor stops
-  @deprecated("use pre stop instead")
-  protected[actors] def exit(reason: AnyRef): Nothing = super.exit(reason)
+ 
+  @deprecated("use postStop instead")
+  protected[actors] override def exit(reason: AnyRef): Nothing = {
+    super.exit(reason)
+  }
   
-  @deprecated("use pre stop instead")
-  protected[actors] override def exit(): Nothing = super.exit()
+  @deprecated("use postStop instead")
+  protected[actors] override def exit(): Nothing = {
+    super.exit()
+  }
   
   @deprecated("use preStart instead")
-  override def start(): RichActor = synchronized {
-    preStart()
+  override def start(): RichActor = synchronized {     
     super.start()
     this
   }
@@ -104,36 +130,75 @@ trait RichActor extends InternalActor {
   @deprecated("use akka instead")
   override def unlink(from: AbstractActor) = super.unlink(from)
     
-  /**
+  /*
    * Internal implementation.
    */
-
-  private[actors] var behaviorStack = immutable.Stack[PartialFunction[Any, Unit]]()
   
+  private[actors] var behaviorStack = immutable.Stack[PartialFunction[Any, Unit]]()
+
+  /*
+   * Checks that RichActor can be created only by ActorSystem.actorOf method.
+   */
+  private[this] def creationCheck = {
+
+    // creation check (see ActorRef)
+    val context = ActorSystem.contextStack.get
+    if (context.isEmpty)
+      throw new Exception("must use actorOf to create actor")
+    else {
+      if (!context.head)
+        throw new Exception("must use actorOf to create actor")
+      else
+        ActorSystem.contextStack.set(context.push(false))
+    }
+    
+  }
+  
+  private[actors] override def preAct() {
+    preStart()
+  }
+  
+  /*
+   * Method that models the behavior of Akka actors.  
+   */
   private[actors] def internalAct() {
-    reset {    
-      
+    reset {
+
       behaviorStack = behaviorStack.push(new PartialFunction[Any, Unit] {
         def isDefinedAt(x: Any) =
           handle.isDefinedAt(x)
         def apply(x: Any) =
           reset { handle(x) }
+      } orElse {
+        case m => unhandled(m)
       })
       
-      while (true) {        
+
+      while (true)
         if (receiveTimeout.isDefined)
-          // TODO (VJ) check the boundary condition receiveTimeout < 1
           reactWithin(receiveTimeout.get)(behaviorStack.top) // orElse 
-        else 
-          react(behaviorStack.top) // orElse
-      }
+        else
+          react(behaviorStack.top) 
+      
     }
   }
   
-  private[actors] override def timeoutMessage = ReceiveTimeout
- 
+  private[actors] override def internalPostStop() = postStop() 
+  
+  lazy val ReceiveTimeout = TIMEOUT
 }
 
-// TODO (VJ) talk to philipp about all the places where Timeout is used
-// TODO (VJ) talk to philipp about package names
-case object ReceiveTimeout
+/**
+ * This message is thrown by default when an Actors behavior doesn't match a message
+ */
+case class UnhandledMessageException(msg: Any, ref: ActorRef = null) extends Exception {
+
+  def this(msg: String) = this(msg, null)
+
+  // constructor with 'null' ActorRef needed to work with client instantiation of remote exception
+  override def getMessage =
+    if (ref ne null) "Actor %s does not handle [%s]".format(ref, msg)
+    else "Actor does not handle [%s]".format(msg)
+
+  override def fillInStackTrace() = this //Don't waste cycles generating stack trace
+}

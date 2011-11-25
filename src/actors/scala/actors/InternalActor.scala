@@ -4,7 +4,7 @@ import scala.util.continuations.suspendable
 import scala.util.control.ControlThrowable
 
 private[actors] trait InternalActor extends AbstractActor with ReplyReactor with ActorCanReply with InputChannel[Any] with Serializable {
-
+  
   /* The following two fields are only used when the actor
    * suspends by blocking its underlying thread, for example,
    * when waiting in a receive or synchronous send.
@@ -360,8 +360,8 @@ private[actors] trait InternalActor extends AbstractActor with ReplyReactor with
       exitReason = reason
     }
     exit()
-  }
-
+  }  
+  
   /**
    * Terminates with exit reason <code>'normal</code>.
    */
@@ -441,6 +441,8 @@ private[actors] trait InternalActor extends AbstractActor with ReplyReactor with
   private[actors] def onTerminate(f: => Unit) {
     scheduler.onTerminate(this) { f }
   }
+  
+  private[actors] def internalPostStop() = {}
 }
 
 

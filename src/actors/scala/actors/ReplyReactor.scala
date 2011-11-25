@@ -108,11 +108,7 @@ trait ReplyReactor extends Reactor[Any] with ReactorCanReply {
     assert(Actor.rawSelf(scheduler) == this, "react on channel belonging to other actor")
     super.react(handler)
   }
-  
-  /**
-   * Returns the type of the message that is sent as a timeout.
-   */
-  private[actors] def timeoutMessage:Any = TIMEOUT
+   
   
   /**
    * Receives a message from this $actor's mailbox within a certain
@@ -130,7 +126,7 @@ trait ReplyReactor extends Reactor[Any] with ReactorCanReply {
     synchronized { drainSendBuffer(mailbox) }
 
     // first, remove spurious TIMEOUT message from mailbox if any
-    mailbox.extractFirst((m: Any, replyTo: OutputChannel[Any]) => m == timeoutMessage)
+    mailbox.extractFirst((m: Any, replyTo: OutputChannel[Any]) => m == TIMEOUT)
 
     while (true) {
       val qel = mailbox.extractFirst((m: Any, replyTo: OutputChannel[Any]) => {
@@ -145,12 +141,12 @@ trait ReplyReactor extends Reactor[Any] with ReactorCanReply {
             // keep going
           } else if (msec == 0L) {
             // throws Actor.suspendException
-            resumeReceiver((timeoutMessage, this), handler, false)
+            resumeReceiver((TIMEOUT, this), handler, false)
           } else {
             waitingFor = handler
             val thisActor = this
             onTimeout = Some(new TimerTask {
-              def run() { thisActor.send(timeoutMessage, thisActor) }
+              def run() { thisActor.send(TIMEOUT, thisActor) }
             })
             Actor.timer.schedule(onTimeout.get, msec)
             throw Actor.suspendException
