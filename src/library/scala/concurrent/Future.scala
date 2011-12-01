@@ -11,8 +11,6 @@ import scala.util.Timeout
 import scala.Option
 //import akka.japi.{ Procedure, Function ⇒ JFunc, Option ⇒ JOption } (commented methods)
 
-import scala.util.continuations._
-
 import java.util.concurrent.{ ConcurrentLinkedQueue, TimeUnit, Callable }
 import java.util.concurrent.TimeUnit.{ NANOSECONDS ⇒ NANOS, MILLISECONDS ⇒ MILLIS }
 //import java.lang.{ Iterable ⇒ JIterable } (commented methods)
@@ -24,6 +22,226 @@ import scala.collection.mutable.Stack
 import java.{ lang ⇒ jl }
 import scala.util.Duration
 import java.util.concurrent.atomic.{ AtomicReferenceFieldUpdater, AtomicInteger, AtomicBoolean }
+
+
+
+/** The trait that represents futures.
+ *  
+ *  @define futureTimeout
+ *  The timeout of the future is:
+ *  - if this future was obtained from a task (i.e. by calling `task.future`), the timeout associated with that task
+ *  - if this future was obtained from a promise (i.e. by calling `promise.future`), the timeout associated with that promise
+ *  - if this future was obtained from a combinator on some other future `g` (e.g. by calling `g.map(_)`), the timeout of `g`
+ *  - if this future was obtained from a combinator on multiple futures `g0`, ..., `g1`, the minimum of the timeouts of these futures
+ *
+ *  @define multipleCallbacks
+ *  Multiple callbacks may be registered; there is no guarantee that they will be
+ *  executed in a particular order.
+ *
+ *  @define caughtThrowables
+ *  The future may contain a throwable object and this means that the future failed.
+ *  Futures obtained through combinators have the same exception as the future they were obtained from.
+ *  The following throwable objects are treated differently:
+ *  - Error - errors are not contained within futures
+ *  - NonLocalControlException - not contained within futures
+ *  - InterruptedException - not contained within futures
+ *
+ *  @define forComprehensionExamples
+ *  Example:
+ *  
+ *  {{{
+ *  val f = future { 5 }
+ *  val g = future { 3 }
+ *  val h = for {
+ *    x: Int <- f // returns Future(5)
+ *    y: Int <- g // returns Future(5)
+ *  } yield x + y
+ *  }}}
+ *  
+ *  is translated to:
+ *
+ *  {{{
+ *  f flatMap { (x: Int) => g map { (y: Int) => x + y } }
+ *  }}}
+ */
+trait Future[+T] extends Blockable[T] {
+  
+  /* Callbacks */
+  
+  /** When this future is completed successfully (i.e. with a value),
+   *  apply the provided function to the value.
+   *  
+   *  If the future has already been completed with a value,
+   *  this will either be applied immediately or be scheduled asynchronously.
+   *  
+   *  Will not be called in case of a timeout.
+   *  
+   *  Will not be called in case of an exception.
+   *  
+   *  $multipleCallbacks
+   */
+  def onSuccess[U](func: T => U): this.type
+  
+  /** When this future is completed with a failure (i.e. with a throwable),
+   *  apply the provided function to the throwable.
+   *
+   *  $caughtThrowables
+   *  
+   *  If the future has already been completed with a failure,
+   *  this will either be applied immediately or be scheduled asynchronously.
+   *  
+   *  Will not be called in case of a timeout.
+   *  
+   *  Will not be called in case of an exception.
+   *  
+   *  $multipleCallbacks
+   */
+  def onFailure[U](func: Throwable => U): this.type
+  
+  /** When this future times out, apply the provided function.
+   *  
+   *  If the future has already timed out,
+   *  this will either be applied immediately or be scheduled asynchronously.
+   *  
+   *  $multipleCallbacks
+   */
+  def onTimeout[U](func: =>U): this.type
+  
+  
+  /* Various info */
+  
+  /** Tests whether this Future's timeout has expired.
+   *
+   *  $futureTimeout
+   *  
+   *  Note that an expired Future may still contain a value, or it may be
+   *  completed with a value.
+   */
+  def isTimedout: Boolean
+  
+  /** This future's timeout.
+   *  
+   *  $futureTimeout
+   */
+  def timeout: Timeout
+  
+  /** This future's timeout in nanoseconds.
+   *  
+   *  $futureTimeout
+   */
+  def timeoutInNanos = if (timeout.duration.isFinite) timeout.duration.toNanos else Long.MaxValue
+  
+  
+  /* Projections */
+  
+  def failed: Future[Exception]
+  
+  def timedout: Future[Timeout]
+  
+  
+  /* Monadic operations */
+  
+  /** Creates a new future that will handle any matching throwable that this
+   *  future might contain. If there is no match, or if this future contains
+   *  a valid result then the new future will contain the same.
+   *  
+   *  Example:
+   *  
+   *  {{{
+   *  future (6 / 0) recover { case e: ArithmeticException ⇒ 0 } // result: 0
+   *  future (6 / 0) recover { case e: NotFoundException   ⇒ 0 } // result: exception
+   *  future (6 / 2) recover { case e: ArithmeticException ⇒ 0 } // result: 3
+   *  }}}
+   */
+  def recover[U >: T](pf: PartialFunction[Throwable, U])(implicit timeout: Timeout): Future[U]
+  
+  /** Asynchronously processes the value in the future once the value becomes available.
+   *  
+   *  Will not be called if the future times out or fails.
+   *  
+   *  This method typically registers an `onResult` callback.
+   */
+  def foreach[U](f: T => U): Unit
+  
+  /** Creates a new future by applying a function to the successful result of
+   *  this future. If this future is completed with an exception then the new
+   *  future will also contain this exception.
+   *  
+   *  $forComprehensionExample
+   */
+  def map[S](f: T => S)(implicit timeout: Timeout): Future[S]
+  
+  /** Creates a new future by applying a function to the successful result of
+   *  this future, and returns the result of the function as the new future.
+   *  If this future is completed with an exception then the new future will
+   *  also contain this exception.
+   *  
+   *  $forComprehensionExample
+   */
+  def flatMap[S](f: T => Future[S])(implicit timeout: Timeout): Future[S]
+  
+  /** Creates a new future by filtering the value of the current future with a predicate.
+   *  
+   *  If the current future contains a value which satisfies the predicate, the new future will also hold that value.
+   *  Otherwise, the resulting future will fail with a `NoSuchElementException`.
+   *  
+   *  If the current future fails or times out, the resulting future also fails or times out, respectively.
+   *
+   *  Example:
+   *  {{{
+   *  val f = future { 5 }
+   *  val g = g filter { _ % 2 == 1 }
+   *  val h = f filter { _ % 2 == 0 }
+   *  block on g // evaluates to 5
+   *  block on h // throw a NoSuchElementException
+   *  }}}
+   */
+  def filter(p: T => Boolean)(implicit timeout: Timeout): Future[T]
+  
+}
+
+
+trait Promise[T] {
+  def future: Future[T]
+  
+  def fulfill(value: T): Unit
+  def fail(t: Throwable): Unit
+}
+
+
+/*object test {
+  
+  val f: Future[Int] = null
+  val g: Future[Int] = null
+  val h = f map (_ + 1) flatMap ( _ => g)
+  
+  // either exceptions
+  val result = block on (h recover {
+    case t: Throwable => handle(t)
+    case TimeoutException(timedout) => null
+  })
+  
+  // or state handling
+  val result = block on (h recover {
+    case t: Throwable => handle(t)
+    case TimeoutException(timedout) => null
+  })
+  
+  // or state handling
+  val result = block on (h treat {
+    case Success(x) => x
+    case Failure(t) => handle(t)
+    case Expired => null
+  })
+  
+} // */
+
+
+
+
+
+
+
 
 object BoxedType {
 
@@ -43,7 +261,7 @@ object BoxedType {
   }
 
 }
-
+/*
 class FutureTimeoutException(message: String, cause: Throwable = null) extends Exception(message, cause) {
   def this(message: String) = this(message, null)
 }
@@ -172,9 +390,10 @@ class FutureFactory(dispatcher: MessageDispatcher, timeout: Timeout) {
 
 */
 }
+*/
 
 object Future {
-
+  /*
   /**
    * This method constructs and returns a Future that will eventually hold the result of the execution of the supplied body
    * The execution is performed by the specified Dispatcher.
@@ -447,12 +666,12 @@ object Future {
           } finally { _taskStack set None }
         }
     }
+    */
 }
 
-sealed trait Future[+T] /*extends japi.Future[T]*/ {
 
-  implicit def dispatcher: MessageDispatcher
-
+//trait Future[+T] {
+  /*
   /**
    * For use only within a Future.flow block or another compatible Delimited Continuations reset block.
    *
@@ -470,14 +689,16 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
    * throws FutureTimeoutException if this Future times out when waiting for completion
    */
   def get: T = this.await.resultOrException.get
-
+  
   /**
    * Blocks the current thread until the Future has been completed or the
    * timeout has expired. In the case of the timeout expiring a
    * FutureTimeoutException will be thrown.
    */
   def await: Future[T]
-
+  */
+  
+  /*
   /**
    * Blocks the current thread until the Future has been completed or the
    * timeout has expired, additionally bounding the waiting period according to
@@ -488,7 +709,8 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
    * imposed by <code>atMost</code>.
    */
   def await(atMost: Duration): Future[T]
-
+  */
+/*
   /**
    * Await completion of this Future and return its value if it conforms to A's
    * erased type. Will throw a ClassCastException if the value does not
@@ -762,10 +984,11 @@ sealed trait Future[+T] /*extends japi.Future[T]*/ {
     case Some(Right(r)) ⇒ Some(r)
     case _              ⇒ None
   }
-}
+  */
+//}
 
 object Promise {
-
+  /*
   /**
    * Creates a non-completed, new, Promise with the supplied timeout in milliseconds
    */
@@ -775,13 +998,15 @@ object Promise {
    * Creates a non-completed, new, Promise with the default timeout (akka.actor.timeout in conf)
    */
   def apply[A]()(implicit dispatcher: MessageDispatcher, timeout: Timeout): Promise[A] = apply(timeout)
+  */
 }
 
 /**
  * Essentially this is the Promise (or write-side) of a Future (read-side).
  */
-trait Promise[T] extends Future[T] {
+//trait Promise[T] extends Future[T] {
 
+  /*
   def start(): Unit
 
   /**
@@ -811,6 +1036,7 @@ trait Promise[T] extends Future[T] {
     other onComplete { f ⇒ complete(f.value.get) }
     this
   }
+  */
 /*
   final def <<(value: T): Future[T] @cps[Future[Any]] = shift { cont: (Future[T] ⇒ Future[Any]) ⇒ cont(complete(Right(value))) }
 
@@ -842,16 +1068,16 @@ trait Promise[T] extends Future[T] {
     fr
   }
 */
-}
+//}
 
 //Companion object to FState, just to provide a cheap, immutable default entry
-private[concurrent] object DefaultPromise {
+//private[concurrent] object DefaultPromise {
+  /*
   def EmptyPending[T](): FState[T] = emptyPendingValue.asInstanceOf[FState[T]]
 
   /**
    * Represents the internal state of the DefaultCompletableFuture
    */
-
   sealed trait FState[+T] { def value: Option[Either[Throwable, T]] }
   case class Pending[T](listeners: List[Future[T] ⇒ Unit] = Nil) extends FState[T] {
     def value: Option[Either[Throwable, T]] = None
@@ -866,14 +1092,16 @@ private[concurrent] object DefaultPromise {
     def value: Option[Either[Throwable, Nothing]] = None
   }
   private val emptyPendingValue = Pending[Nothing](Nil)
-}
+  */
+//}
 
 /**
  * The default concrete Future implementation.
  */
-class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDispatcher) extends AbstractPromise with Promise[T] {
-  self ⇒
-
+//class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDispatcher) extends AbstractPromise with Promise[T] {
+//  self ⇒
+  
+  /*
   import DefaultPromise.{ FState, Success, Failure, Pending, Expired }
 
   def this()(implicit dispatcher: MessageDispatcher, timeout: Timeout) = this(timeout)
@@ -887,7 +1115,7 @@ class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDi
   def start() {
     // do nothing
   }
-
+  
   @tailrec
   private def awaitUnsafe(waitTimeNanos: Long): Boolean = {
     if (value.isEmpty && waitTimeNanos > 0) {
@@ -1050,7 +1278,7 @@ class DefaultPromise[T](val timeout: Timeout)(implicit val dispatcher: MessageDi
   private def timeLeft(): Long = timeoutInNanos - (currentTimeInNanos - _startTimeInNanos)
 
   private def timeLeftNoinline(): Long = timeLeft()
-}
+//}
 
 /**
  * An already completed Future is seeded with it's result at creation, is useful for when you are participating in
@@ -1073,5 +1301,5 @@ sealed class KeptPromise[T](suppliedValue: Either[Throwable, T])(implicit val di
 
   final def onTimeout(func: Future[T] ⇒ Unit): this.type = this
   final def orElse[A >: T](fallback: ⇒ A): Future[A] = this
-
-}
+  */
+//}

@@ -6,11 +6,14 @@ import scala.util.{Duration, Timeout}
 
 trait ExecutionContext {
 
+  protected implicit object CanBlockEvidence extends CanBlock
+  
   def execute(task: Runnable): Unit
   def dispatchTask(task: () => Unit): Unit
   def newPromise[T](body: => T): Promise[T]
   def newPromise[T](timeout: Timeout, body: => T): Promise[T] =
     newPromise(body) // TODO add timeout
+  def blockingCall[T](body: Blockable[T]): T
 
 }
 
@@ -70,12 +73,14 @@ private[concurrent] class ForkJoinExecutionContext extends ExecutionContext {
  * Implements a blocking execution context
  */
 private[concurrent] class BlockingExecutionContext extends ExecutionContext {
-  val pool = makeCachedThreadPool // TODO FIXME: need to merge thread pool factory methods from Heather's parcolls repo
+  //val pool = makeCachedThreadPool // TODO FIXME: need to merge thread pool factory methods from Heather's parcolls repo
 
   def execute(task: Runnable) {
+    /* TODO
     val p = newPromise(task.run())
     p.start()
     pool execute p
+    */
   }
 
   // TODO FIXME: implement
