@@ -2,16 +2,26 @@ package scala.concurrent
 
 import java.util.concurrent.{ Executors, Future => JFuture }
 import scala.util.{ Duration, Timeout }
-import scala.concurrent.forkjoin._
+import scala.concurrent.forkjoin.{ ForkJoinPool, RecursiveTask => FJTask, RecursiveAction, ForkJoinWorkerThread }
 
 trait ExecutionContext {
 
-  def dispatchTask(task: () => Unit): Unit
+  protected implicit object CanBlockEvidence extends CanBlock
+  
+  def execute(task: Runnable): Unit
+  
+  def makeTask[T](task: () => T)(implicit timeout: Timeout): Task[T]
+  
+  def makePromise[T](timeout: Timeout): Promise[T]
+  
+  def blockingCall[T](body: Blockable[T]): T
 
-  def newPromise[T](body: () => T): Promise[T]
+}
 
-  def newPromise[T](timeout: Timeout, body: () => T): Promise[T] =
-    newPromise(body) // TODO add timeout
+trait Task[T] {
+
+  def start(): Unit
+  def future: Future[T]
 
 }
 
@@ -19,28 +29,32 @@ trait ExecutionContext {
  * to avoid an object allocation per promise. This requires turning DefaultPromise
  * into a trait, i.e., removing its constructor parameters.
  */
-private[concurrent] class ForkJoinPromise[T](context: ForkJoinExecutionContext, body: () => T, within: Long) extends DefaultPromise[T] {
+private[concurrent] class ForkJoinTaskImpl[T](context: ForkJoinExecutionContext, body: () => T, within: Timeout) extends FJTask[T] with Task[T] {
 
-  val timeout = Timeout(within)
+  val timeout = within
   implicit val dispatcher = context
 
-  // body of RecursiveAction
-  override def compute(): Unit =
+  // body of RecursiveTask
+  def compute(): T =
     body()
 
-  override def start(): Unit =
+  def start(): Unit =
     fork()
 
+  def future: Future[T] = {
+    null
+  }
+
   // TODO FIXME: handle timeouts
-  override def await(atMost: Duration): this.type =
+  def await(atMost: Duration): this.type =
     await
 
-  override def await: this.type = {
+  def await: this.type = {
     this.join()
     this
   }
 
-  override def tryCancel(): Unit =
+  def tryCancel(): Unit =
     tryUnfork()
 }
 
@@ -55,14 +69,21 @@ private[concurrent] final class ForkJoinExecutionContext extends ExecutionContex
       pool execute task
   }
 
-  def dispatchTask(body: () => Unit) {
-    val task = new RecursiveAction { def compute() { body() } }
-    executeForkJoinTask(task)
+  def execute(task: Runnable) {
+    val action = new RecursiveAction { def compute() { task.run() } }
+    executeForkJoinTask(action)
   }
+  
+  def makeTask[T](body: () => T)(implicit timeout: Timeout): Task[T] = {
+    new ForkJoinTaskImpl(this, body, timeout)
+  }
+  
+  def makePromise[T](timeout: Timeout): Promise[T] =
+    null
+  
+  def blockingCall[T](body: Blockable[T]): T =
+    body.block()(CanBlockEvidence)
 
-  // type of body is () => T to avoid creating another closure
-  def newPromise[T](body: () => T): Promise[T] =
-    new ForkJoinPromise(this, body, 0L)
 }
 
 /**
@@ -70,12 +91,14 @@ private[concurrent] final class ForkJoinExecutionContext extends ExecutionContex
  */
 /*
 private[concurrent] class BlockingExecutionContext extends ExecutionContext {
-  val pool = makeCachedThreadPool // TODO FIXME: need to merge thread pool factory methods from Heather's parcolls repo
+  //val pool = makeCachedThreadPool // TODO FIXME: need to merge thread pool factory methods from Heather's parcolls repo
 
   def execute(task: Runnable) {
+    /* TODO
     val p = newPromise(task.run())
     p.start()
     pool execute p
+    */
   }
 
   // TODO FIXME: implement
